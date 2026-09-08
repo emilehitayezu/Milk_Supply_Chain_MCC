@@ -2,9 +2,19 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { ArrowRight, ShieldCheck } from "lucide-react";
+
+function RedirectToDashboard() {
+  const router = useRouter();
+
+  useEffect(() => {
+    router.replace("/dashboard");
+  }, [router]);
+
+  return null;
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -14,13 +24,12 @@ export default function LoginPage() {
   const [message, setMessage] = useState("");
 
   if (user) {
-    router.replace("/dashboard");
-    return null;
+    return <RedirectToDashboard />;
   }
 
   async function handleLogin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const result = login(email, password);
+    const result = await login(email, password);
     setMessage(result.message);
 
     if (result.ok) {
@@ -49,6 +58,9 @@ export default function LoginPage() {
               <li>• admin@milk.local / admin123</li>
               <li>• manager@milk.local / manager123</li>
               <li>• officer@milk.local / officer123</li>
+              <li>• farmer@milk.local / farmer123</li>
+              <li>• collector@milk.local / collector123</li>
+              <li>• vet@milk.local / vet123</li>
             </ul>
           </div>
         </div>

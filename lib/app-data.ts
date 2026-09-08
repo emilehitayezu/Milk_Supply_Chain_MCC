@@ -9,11 +9,15 @@ export type UserRole =
   | "PROCESSING_INDUSTRY"
   | "FINANCE_OFFICER";
 
+export const DEFAULT_INITIAL_PASSWORD = "MyPassword@2026";
+
 export type AppUser = {
   uid: string;
+  username?: string;
   fullName: string;
   email: string;
   password: string;
+  mustChangePassword?: boolean;
   role: UserRole;
   mccIds: string[];
   status: "ACTIVE" | "INACTIVE" | "SUSPENDED";
@@ -54,6 +58,8 @@ export type AppState = {
   settings: {
     projectName: string;
     milkPrice: number;
+    mccSharePercent: number;
+    collectorSharePercent: number;
     timezone: string;
     notificationEmail: string;
   };
@@ -73,45 +79,65 @@ export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
     "audit.view",
     "settings.view",
     "settings.edit",
+    "operations.view",
+    "operations.write",
+    "accounting.view",
+    "administration.view",
   ],
   ADMIN: [
     "dashboard.view",
     "users.view",
     "users.create",
+    "users.edit",
     "mcc.view",
     "mcc.create",
+    "mcc.edit",
     "audit.view",
     "settings.view",
+    "settings.edit",
+    "operations.view",
+    "operations.write",
+    "accounting.view",
+    "administration.view",
   ],
   MCC_MANAGER: [
     "dashboard.view",
     "mcc.view",
     "mcc.edit",
-    "audit.view",
     "settings.view",
+    "operations.view",
+    "operations.write",
+    "accounting.view",
+    "administration.view",
   ],
   MCC_OFFICER: [
     "dashboard.view",
-    "mcc.view",
-    "audit.view",
+    "operations.view",
+    "operations.write",
+    "accounting.view",
+    "administration.view",
   ],
   MILK_COLLECTOR: [
     "dashboard.view",
-    "mcc.view",
+    "operations.view",
+    "operations.write",
   ],
   FARMER: [
     "dashboard.view",
   ],
   VETERINARY_OFFICER: [
     "dashboard.view",
-    "mcc.view",
+    "operations.view",
+    "operations.write",
+    "farmer-cow.manage",
   ],
   PROCESSING_INDUSTRY: [
     "dashboard.view",
+    "operations.view",
   ],
   FINANCE_OFFICER: [
     "dashboard.view",
-    "audit.view",
+    "operations.view",
   ],
 };
 
@@ -187,14 +213,28 @@ export const defaultState: AppState = {
   settings: {
     projectName: "Digital Milk Collection System",
     milkPrice: 620,
+    mccSharePercent: 10,
+    collectorSharePercent: 5,
     timezone: "UTC",
     notificationEmail: "notify@milk.local",
   },
 };
 
-export function readAppState(): AppState {
+export async function readAppState(): Promise<AppState> {
   if (typeof window === "undefined") {
     return defaultState;
+  }
+
+  try {
+    const response = await fetch("/api/system", { cache: "no-store" });
+    if (response.ok) {
+      const payload = (await response.json()) as AppState;
+      if (payload?.users && payload?.mccs && payload?.auditLogs) {
+        return payload;
+      }
+    }
+  } catch {
+    // fall through to local fallback
   }
 
   const rawValue = window.localStorage.getItem(STORAGE_KEY);
@@ -221,19 +261,38 @@ export function readAppState(): AppState {
   }
 }
 
-export function writeAppState(state: AppState): void {
+export async function writeAppState(state: AppState): Promise<void> {
   if (typeof window === "undefined") {
     return;
   }
 
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  try {
+    const response = await fetch("/api/system", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "saveState", state }),
+    });
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(payload?.error ?? "The changes could not be saved to MySQL.");
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error("The changes could not be saved to MySQL. Check that the database is available and try again.");
+  }
 }
 
-export function appendAuditEntry(
+export async function appendAuditEntry(
   entry: Omit<AuditEntry, "auditId" | "timestamp">,
   userId = "system",
-): AppState {
-  const state = readAppState();
+): Promise<AppState> {
+  if (typeof window === "undefined") {
+    return defaultState;
+  }
+
+  const state = await readAppState();
   const nextAuditLogs = [
     {
       ...entry,
@@ -245,7 +304,7 @@ export function appendAuditEntry(
   ];
 
   const nextState = { ...state, auditLogs: nextAuditLogs };
-  writeAppState(nextState);
+  await writeAppState(nextState);
   return nextState;
 }
 
