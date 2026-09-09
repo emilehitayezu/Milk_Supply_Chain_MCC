@@ -106,13 +106,30 @@ export type QualityTest = {
 export type MilkBatch = {
   batchId: string;
   mccId: string;
+  collectorId?: string;
+  collectorName?: string;
+  parentBatchCode?: string;
   batchDate: string;
   totalLitres: number;
   destination?: string;
   status: "OPEN" | "CLOSED" | "DISPATCHED" | "ACCEPTED" | "REJECTED";
+  approvalComment?: string;
+  approvedBy?: string;
+  approvedAt?: string;
   createdBy: string;
   createdAt: string;
   collectionIds?: string[];
+};
+
+export type CollectorBatchAssignment = {
+  assignmentId: string;
+  collectorId: string;
+  collectorName?: string;
+  mccId: string;
+  batchCode: string;
+  status: "ACTIVE" | "INACTIVE";
+  assignedBy: string;
+  createdAt: string;
 };
 
 export type FarmerPayment = {

@@ -73,13 +73,13 @@ export default function LoginPage() {
 
           <form onSubmit={handleLogin} className="space-y-5">
             <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700">Email</label>
+              <label className="mb-2 block text-sm font-medium text-slate-700">Email or username</label>
               <input
-                type="email"
+              type="text"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-900 outline-none ring-0 transition focus:border-emerald-500 focus:bg-white"
-                placeholder="admin@milk.local"
+                placeholder="admin@milk.local or admin"
                 required
               />
             </div>

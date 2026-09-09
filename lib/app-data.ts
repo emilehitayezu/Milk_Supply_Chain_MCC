@@ -20,6 +20,7 @@ export type AppUser = {
   mustChangePassword?: boolean;
   role: UserRole;
   mccIds: string[];
+  collectorBatchCode?: string;
   status: "ACTIVE" | "INACTIVE" | "SUSPENDED";
 };
 

@@ -16,6 +16,8 @@ import {
   updateRejectedBatchComment,
   createPayment,
   updatePaymentShares,
+  listCollectorPayments,
+  markCollectorPaymentPaid,
   listAccountingRecords,
   createExpenseType,
   createExpense,
@@ -32,6 +34,7 @@ import {
   getUserByUid,
   updateUserByAdmin,
   createUser,
+  createCollectorUser,
   deleteUserByAdmin,
   loginUser,
   changeUserPassword,
@@ -54,6 +57,10 @@ import {
   readDatabaseState,
   saveDatabaseState,
   updateMccByAdmin,
+  listCollectorBatchAssignments,
+  createCollectorBatchAssignment,
+  listCollectorBatchApprovals,
+  decideCollectorBatches,
 } from "@/lib/data-layer";
 import { DEFAULT_INITIAL_PASSWORD } from "@/lib/app-data";
 
@@ -181,8 +188,8 @@ export async function POST(request: Request) {
       if (!actor || actor.role !== "MCC_MANAGER") return NextResponse.json({ error: "Only the MCC Manager can create collectors." }, { status: 403 });
       const data = body.data ?? {};
       if (!data.fullName || !data.email) return NextResponse.json({ error: "Collector name and email are required." }, { status: 400 });
-      await createUser({ uid: `collector-${Date.now()}`, fullName: String(data.fullName), email: String(data.email), password: DEFAULT_INITIAL_PASSWORD, role: "MILK_COLLECTOR", mccIds: actor.mccIds ?? [], status: "ACTIVE" });
-      return NextResponse.json({ ok: true });
+      const collectorBatchCode = await createCollectorUser({ uid: `collector-${Date.now()}`, fullName: String(data.fullName), email: String(data.email), password: DEFAULT_INITIAL_PASSWORD, mccIds: actor.mccIds ?? [] });
+      return NextResponse.json({ ok: true, collectorBatchCode });
     }
 
     if (body.action === "deleteUser") {
@@ -451,6 +458,38 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
+    if (body.action === "collectorBatchApprovals") {
+      const actor = await getUserByUid(body.userId ?? "");
+      if (!actor || !["MCC_OFFICER", "MCC_MANAGER", "ADMIN", "SUPER_ADMIN"].includes(actor.role)) return NextResponse.json({ error: "Batch approval access denied." }, { status: 403 });
+      return NextResponse.json({ batches: await listCollectorBatchApprovals() });
+    }
+
+    if (body.action === "collectorBatchAssignments") {
+      const actor = await getUserByUid(body.userId ?? "");
+      if (!actor || !["MILK_COLLECTOR", "MCC_OFFICER", "MCC_MANAGER", "ADMIN", "SUPER_ADMIN"].includes(actor.role)) return NextResponse.json({ error: "Batch assignment access denied." }, { status: 403 });
+      const assignments = await listCollectorBatchAssignments();
+      return NextResponse.json({ assignments: actor.role === "MILK_COLLECTOR" ? assignments.filter((assignment) => assignment.collectorId === actor.uid && assignment.status === "ACTIVE") : assignments });
+    }
+
+    if (body.action === "assignCollectorBatch") {
+      const actor = await getUserByUid(body.userId ?? "");
+      if (!actor || !["MCC_MANAGER", "ADMIN", "SUPER_ADMIN"].includes(actor.role)) return NextResponse.json({ error: "Only MCC Managers and administrators can assign collector batches." }, { status: 403 });
+      const assignment = await createCollectorBatchAssignment({ collectorId: String(body.data?.collectorId ?? ""), mccId: String(body.data?.mccId ?? actor.mccIds[0] ?? ""), assignedBy: actor.uid, batchCode: body.data?.batchCode ? String(body.data.batchCode) : undefined });
+      return NextResponse.json({ ok: true, assignment });
+    }
+
+    if (body.action === "decideCollectorBatches") {
+      const actor = await getUserByUid(body.userId ?? "");
+      if (!actor || !["MCC_OFFICER", "MCC_MANAGER", "ADMIN", "SUPER_ADMIN"].includes(actor.role)) return NextResponse.json({ error: "Only MCC Officers and Managers can approve collector batches." }, { status: 403 });
+      await decideCollectorBatches({
+        batchIds: Array.isArray(body.data?.batchIds) ? body.data.batchIds.map(String) : [],
+        status: body.data?.status === "REJECTED" ? "REJECTED" : "ACCEPTED",
+        comment: String(body.data?.comment ?? ""),
+        approvedBy: actor.uid,
+      });
+      return NextResponse.json({ ok: true });
+    }
+
     if (body.action === "createPayment") {
       const actor = await getUserByUid(body.userId ?? "");
       if (!actor || !["SUPER_ADMIN", "ADMIN", "FINANCE_OFFICER"].includes(actor.role)) return NextResponse.json({ error: "You are not allowed to create payments." }, { status: 403 });
@@ -477,6 +516,31 @@ export async function POST(request: Request) {
       const actor = await getUserByUid(body.userId ?? "");
       if (!actor || !["SUPER_ADMIN", "ADMIN", "MCC_OFFICER", "MCC_MANAGER"].includes(actor.role)) return NextResponse.json({ error: "Accounting access denied." }, { status: 403 });
       return NextResponse.json(await listAccountingRecords());
+    }
+
+    if (body.action === "collectorPayments") {
+      const actor = await getUserByUid(body.userId ?? "");
+      if (!actor || !["SUPER_ADMIN", "ADMIN", "MCC_MANAGER", "MCC_OFFICER", "FINANCE_OFFICER"].includes(actor.role)) {
+        return NextResponse.json({ error: "You are not allowed to view collector payments." }, { status: 403 });
+      }
+      return NextResponse.json({ collectorPayments: await listCollectorPayments() });
+    }
+
+    if (body.action === "markCollectorPaymentPaid") {
+      const actor = await getUserByUid(body.userId ?? "");
+      if (!actor || !["SUPER_ADMIN", "ADMIN", "MCC_MANAGER", "MCC_OFFICER"].includes(actor.role)) {
+        return NextResponse.json({ error: "Only MCC Officers and administrators can approve collector payments." }, { status: 403 });
+      }
+      await markCollectorPaymentPaid(body.data, actor.uid);
+      await appendAuditEntryToDatabase({
+        userId: actor.uid,
+        action: "COLLECTOR_PAYMENT_PAID",
+        module: "accounting",
+        entityType: "collectorPayment",
+        entityId: String(body.data?.paymentId ?? ""),
+        description: `Collector payment for ${body.data?.collectorName ?? body.data?.collectorId} was marked Paid.`,
+      }, actor.uid);
+      return NextResponse.json({ ok: true });
     }
     if (body.action === "createExpenseType") {
       const actor = await getUserByUid(body.userId ?? "");

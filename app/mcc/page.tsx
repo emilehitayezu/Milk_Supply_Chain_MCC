@@ -7,6 +7,19 @@ import { appendAuditEntry, type AppState, type AppUser, type MccCenter, readAppS
 import { hasPermission } from "@/lib/auth/roles";
 import type { BreedType } from "@/lib/phase2-data";
 
+type CollectorBatch = {
+  batchId: string;
+  collectorId?: string;
+  collectorName: string;
+  collectorBatchCode?: string;
+  batchDate: string;
+  totalLitres: number;
+  status: string;
+  approvalComment?: string;
+  approvedAt?: string;
+  farmerNames?: string[];
+};
+
 const emptyForm = {
   mccCode: "MCC-00",
   name: "",
@@ -30,6 +43,12 @@ export default function MccPage() {
   const [editingMcc, setEditingMcc] = useState({ name: "", district: "" });
   const [breedTypes, setBreedTypes] = useState<BreedType[]>([]);
   const [breedName, setBreedName] = useState("");
+  const [collectorBatches, setCollectorBatches] = useState<CollectorBatch[]>([]);
+  const [expandedCollectors, setExpandedCollectors] = useState<string[]>([]);
+  const [selectedBatchIds, setSelectedBatchIds] = useState<string[]>([]);
+  const [approvalComment, setApprovalComment] = useState("");
+  const [batchAssignments, setBatchAssignments] = useState<Array<{ assignmentId: string; collectorId: string; collectorName?: string; batchCode: string; status: string }>>([]);
+  const [assignmentCollectorId, setAssignmentCollectorId] = useState("");
 
   useEffect(() => {
     let isMounted = true;
@@ -43,6 +62,12 @@ export default function MccPage() {
       const response = await fetch("/api/system", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "breedTypes", userId: user?.uid }) });
       const result = await response.json() as { breedTypes?: BreedType[] };
       if (isMounted) setBreedTypes(result.breedTypes ?? []);
+      const batchResponse = await fetch("/api/system", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "collectorBatchApprovals", userId: user?.uid }) });
+      const batchResult = await batchResponse.json() as { batches?: CollectorBatch[] };
+      if (isMounted) setCollectorBatches(batchResult.batches ?? []);
+      const assignmentResponse = await fetch("/api/system", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "collectorBatchAssignments", userId: user?.uid }) });
+      const assignmentResult = await assignmentResponse.json() as { assignments?: typeof batchAssignments };
+      if (isMounted) setBatchAssignments(assignmentResult.assignments ?? []);
     }
 
     void loadState();
@@ -210,7 +235,7 @@ export default function MccPage() {
       return;
     }
     setCollectorForm({ fullName: "", email: "", password: "" });
-    setMessage("Milk collector account created successfully.");
+    setMessage(`Milk collector account created successfully. Assigned batch: ${result.collectorBatchCode ?? "pending"}.`);
     setState(await readAppState());
   }
 
@@ -222,6 +247,46 @@ export default function MccPage() {
     if (result.breedType) setBreedTypes((current) => [...current, result.breedType!].sort((a, b) => a.name.localeCompare(b.name)));
     setBreedName("");
     setMessage("Breed type created successfully.");
+  }
+
+  async function decideSelectedBatches(status: "ACCEPTED" | "REJECTED") {
+    if (!selectedBatchIds.length) {
+      setMessage("Select at least one sub-batch.");
+      return;
+    }
+
+    if (status === "REJECTED" && !approvalComment.trim()) {
+      setMessage("A rejection comment is required.");
+      return;
+    }
+    const response = await fetch("/api/system", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "decideCollectorBatches", userId: safeUser.uid, data: { batchIds: selectedBatchIds, status, comment: approvalComment } }) });
+    const result = await response.json();
+    if (!response.ok) {
+      setMessage(result.error ?? "Batch decision could not be saved.");
+      return;
+    }
+    const refresh = await fetch("/api/system", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "collectorBatchApprovals", userId: safeUser.uid }) });
+    const refreshed = await refresh.json() as { batches?: CollectorBatch[] };
+    setCollectorBatches(refreshed.batches ?? []);
+    setSelectedBatchIds([]);
+    setApprovalComment("");
+    setMessage(status === "ACCEPTED" ? "Selected sub-batches approved." : "Selected sub-batches rejected.");
+  }
+
+  async function assignBatch() {
+    if (!assignmentCollectorId) {
+      setMessage("Select a milk collector first.");
+      return;
+    }
+    const response = await fetch("/api/system", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "assignCollectorBatch", userId: safeUser.uid, data: { collectorId: assignmentCollectorId, mccId: safeState.mccs[0]?.mccId } }) });
+    const result = await response.json();
+    if (!response.ok) {
+      setMessage(result.error ?? "Batch could not be assigned.");
+      return;
+    }
+    setBatchAssignments((current) => [...current, result.assignment]);
+    setAssignmentCollectorId("");
+    setMessage(`Assigned ${result.assignment.batchCode} to the collector.`);
   }
 
   return (
@@ -293,6 +358,33 @@ export default function MccPage() {
                 </select>
                 <button type="button" onClick={assignManager} className="w-full rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-500">Assign to MCC-001</button>
               </div>
+
+              <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div><h2 className="text-xl font-semibold text-slate-900">Milk collector batch approvals</h2><p className="mt-1 text-sm text-slate-500">Expand a collector to review and decide individual sub-batches.</p></div>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={() => void decideSelectedBatches("ACCEPTED")} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white">Approve selected</button>
+                    <button type="button" onClick={() => void decideSelectedBatches("REJECTED")} className="rounded-lg bg-rose-700 px-3 py-2 text-xs font-semibold text-white">Reject selected</button>
+                  </div>
+                </div>
+                <textarea value={approvalComment} onChange={(event) => setApprovalComment(event.target.value)} placeholder="Comment for the selected sub-batches (required when rejecting)" className="mt-4 min-h-20 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+                <div className="mt-4 overflow-x-auto">
+                  <table className="min-w-full text-left text-sm">
+                    <thead className="bg-slate-50 text-slate-600"><tr><th className="px-3 py-3 font-medium">No.</th><th className="px-3 py-3 font-medium">Collector name</th><th className="px-3 py-3 font-medium">Batches</th><th className="px-3 py-3 font-medium">Status</th><th className="px-3 py-3 font-medium">Comments</th></tr></thead>
+                    <tbody>
+                      {[...new Map(collectorBatches.map((batch) => [batch.collectorId ?? batch.collectorName, batch])).values()].map((collector, index) => {
+                        const collectorKey = collector.collectorId ?? collector.collectorName;
+                        const batches = collectorBatches.filter((batch) => (batch.collectorId ?? batch.collectorName) === collectorKey);
+                        const expanded = expandedCollectors.includes(collectorKey);
+                        return <tr key={collectorKey} className="border-t border-slate-100 align-top"><td className="px-3 py-3">{index + 1}</td><td className="px-3 py-3 font-medium text-slate-800">{collector.collectorName}</td><td className="px-3 py-3"><button type="button" onClick={() => setExpandedCollectors((current) => expanded ? current.filter((key) => key !== collectorKey) : [...current, collectorKey])} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold">{expanded ? "Hide" : "Expand"} {collector.collectorBatchCode ?? "batches"} ({batches.length})</button>{expanded ? <div className="mt-3 min-w-[34rem] space-y-2">{batches.map((batch) => <label key={batch.batchId} className="flex items-start gap-2 rounded-lg border border-slate-200 px-3 py-2"><input type="checkbox" disabled={batch.status !== "OPEN"} checked={selectedBatchIds.includes(batch.batchId)} onChange={(event) => setSelectedBatchIds((current) => event.target.checked ? [...current, batch.batchId] : current.filter((id) => id !== batch.batchId))} /><span className="flex-1"><strong>{batch.batchId}</strong><span className="ml-2 text-xs text-slate-500">{batch.batchDate} · {batch.totalLitres.toFixed(2)} L</span><span className="mt-1 block text-xs text-slate-600">Farmers: {batch.farmerNames?.join(", ") || "No farmers linked"}</span></span><span className="text-xs font-medium">{batch.status === "OPEN" ? "PENDING" : batch.status}</span></label>)}</div> : null}</td><td className="px-3 py-3">{batches.every((batch) => batch.status === "ACCEPTED") ? "Approved" : batches.every((batch) => batch.status === "REJECTED") ? "Rejected" : "Pending / mixed"}</td><td className="px-3 py-3">{batches.filter((batch) => batch.approvalComment).map((batch) => <div key={batch.batchId} className="mb-1 text-xs"><strong>{batch.batchId}:</strong> {batch.approvalComment}</div>)}</td></tr>;
+                      })}
+                      {!collectorBatches.length ? <tr><td colSpan={5} className="px-3 py-6 text-center text-slate-500">No collector sub-batches are available.</td></tr> : null}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              {safeUser.role === "MCC_MANAGER" ? <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="text-xl font-semibold text-slate-900">Assign collector batches</h2><p className="mt-1 text-sm text-slate-500">Each assigned parent batch uses the format BATCH-01-NAME_INITIALS.</p><div className="mt-4 flex flex-col gap-3 sm:flex-row"><select value={assignmentCollectorId} onChange={(event) => setAssignmentCollectorId(event.target.value)} className="rounded-xl border px-3 py-2"><option value="">Select milk collector</option>{safeState.users.filter((entry) => entry.role === "MILK_COLLECTOR").map((entry) => <option key={entry.uid} value={entry.uid}>{entry.fullName}</option>)}</select><button type="button" onClick={() => void assignBatch()} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Assign next batch</button></div><div className="mt-4 overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="bg-slate-50"><tr><th className="px-3 py-3">Collector</th><th className="px-3 py-3">Assigned batch</th><th className="px-3 py-3">Status</th></tr></thead><tbody>{batchAssignments.map((assignment) => <tr key={assignment.assignmentId} className="border-t"><td className="px-3 py-3">{assignment.collectorName}</td><td className="px-3 py-3 font-medium">{assignment.batchCode}</td><td className="px-3 py-3">{assignment.status}</td></tr>)}</tbody></table></div></section> : null}
             </div>
           </div>
 

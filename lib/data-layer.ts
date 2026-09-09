@@ -13,6 +13,7 @@ import type {
   CowRegistrationAuthorization,
   CowRegistrationSession,
   BreedType,
+  CollectorBatchAssignment,
 } from "@/lib/phase2-data";
 import type { UserRole } from "@/lib/app-data";
 import type { RowDataPacket } from "mysql2";
@@ -285,6 +286,7 @@ function toUser(row: any): AppUser {
     mustChangePassword: Boolean(row.must_change_password),
     role: row.role as AppUser["role"],
     mccIds: parseMccIds(row.mcc_ids),
+    collectorBatchCode: row.collector_batch_code ? String(row.collector_batch_code) : undefined,
     status: row.status as AppUser["status"],
   };
 }
@@ -354,8 +356,8 @@ export async function saveDatabaseState(state: AppState): Promise<void> {
 
     for (const user of state.users) {
       await connection.execute(
-        `INSERT INTO users (uid, username, full_name, email, password, role, mcc_ids, status, must_change_password)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO users (uid, username, full_name, email, password, role, mcc_ids, collector_batch_code, status, must_change_password)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
            username = VALUES(username),
            full_name = VALUES(full_name),
@@ -363,9 +365,10 @@ export async function saveDatabaseState(state: AppState): Promise<void> {
            password = VALUES(password),
            role = VALUES(role),
            mcc_ids = VALUES(mcc_ids),
+           collector_batch_code = VALUES(collector_batch_code),
            status = VALUES(status),
            must_change_password = VALUES(must_change_password)`,
-        [user.uid, user.username ?? user.email, user.fullName, user.email, user.password, user.role, JSON.stringify(user.mccIds ?? []), user.status, user.mustChangePassword ? 1 : 0],
+        [user.uid, user.username ?? user.email, user.fullName, user.email, user.password, user.role, JSON.stringify(user.mccIds ?? []), user.collectorBatchCode ?? null, user.status, user.mustChangePassword ? 1 : 0],
       );
     }
 
@@ -472,7 +475,15 @@ export async function updateMccByAdmin(input: {
 }
 
 export async function loginUser(email: string, password: string): Promise<AppUser | null> {
-  const [rows] = await mysqlPool.execute(`SELECT * FROM users WHERE (email = ? OR username = ?) AND password = ? LIMIT 1`, [email, email, password]);
+  const identifier = email.trim();
+  const [rows] = await mysqlPool.execute(
+    `SELECT * FROM users
+     WHERE status = 'ACTIVE'
+       AND (LOWER(email) = LOWER(?) OR LOWER(username) = LOWER(?))
+       AND password = ?
+     LIMIT 1`,
+    [identifier, identifier, password],
+  );
   const row = (rows as any[])[0];
   return row ? toUser(row) : null;
 }
@@ -503,12 +514,24 @@ export async function updateUserByAdmin(input: Pick<AppUser, "uid" | "fullName" 
   );
 }
 
-export async function createUser(input: Pick<AppUser, "uid" | "fullName" | "email" | "password" | "role" | "mccIds" | "status">): Promise<void> {
+export async function createUser(input: Pick<AppUser, "uid" | "fullName" | "email" | "password" | "role" | "mccIds" | "status"> & { collectorBatchCode?: string }): Promise<void> {
   await mysqlPool.execute(
-    `INSERT INTO users (uid, username, full_name, email, password, role, mcc_ids, status, must_change_password)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-    [input.uid, input.email, input.fullName, input.email, input.password, input.role, JSON.stringify(input.mccIds ?? []), input.status],
+    `INSERT INTO users (uid, username, full_name, email, password, role, mcc_ids, collector_batch_code, status, must_change_password)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+    [input.uid, input.email, input.fullName, input.email, input.password, input.role, JSON.stringify(input.mccIds ?? []), input.collectorBatchCode ?? null, input.status],
   );
+}
+
+function nameInitials(fullName: string): string {
+  return fullName.trim().split(/\s+/).map((part) => part[0]).join("").slice(0, 3).toUpperCase() || "COL";
+}
+
+export async function createCollectorUser(input: { uid: string; fullName: string; email: string; password: string; mccIds: string[] }): Promise<string> {
+  const [rows] = await mysqlPool.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM users WHERE role = 'MILK_COLLECTOR'");
+  const sequence = Number(rows[0]?.total ?? 0) + 1;
+  const batchCode = `BATCH-${String(sequence).padStart(2, "0")}-${nameInitials(input.fullName)}`;
+  await createUser({ ...input, role: "MILK_COLLECTOR", status: "ACTIVE", collectorBatchCode: batchCode });
+  return batchCode;
 }
 
 export async function deleteUserByAdmin(uid: string): Promise<void> {
@@ -623,14 +646,61 @@ function toBatch(row: any): MilkBatch {
   return {
     batchId: String(row.batch_id),
     mccId: String(row.mcc_id),
+    collectorId: row.collector_id ? String(row.collector_id) : undefined,
+    collectorName: row.collector_name ? String(row.collector_name) : undefined,
+    parentBatchCode: row.parent_batch_code ? String(row.parent_batch_code) : undefined,
     batchDate: String(row.batch_date).slice(0, 10),
     totalLitres: Number(row.total_litres),
     destination: row.destination ? String(row.destination) : undefined,
     status: row.status as MilkBatch["status"],
+    approvalComment: row.approval_comment ? String(row.approval_comment) : undefined,
+    approvedBy: row.approved_by ? String(row.approved_by) : undefined,
+    approvedAt: row.approved_at ? String(row.approved_at) : undefined,
     createdBy: String(row.created_by),
     createdAt: String(row.created_at),
     collectionIds: row.collection_ids ? String(row.collection_ids).split(",") : [],
   };
+}
+
+function toCollectorBatchAssignment(row: any): CollectorBatchAssignment {
+  return {
+    assignmentId: String(row.assignment_id),
+    collectorId: String(row.collector_id),
+    collectorName: row.collector_name ? String(row.collector_name) : undefined,
+    mccId: String(row.mcc_id),
+    batchCode: String(row.batch_code),
+    status: row.status as CollectorBatchAssignment["status"],
+    assignedBy: String(row.assigned_by),
+    createdAt: String(row.created_at),
+  };
+}
+
+export async function listCollectorBatchAssignments(): Promise<CollectorBatchAssignment[]> {
+  const [rows] = await mysqlPool.execute(
+    `SELECT a.*, u.full_name AS collector_name
+     FROM collector_batch_assignments a
+     JOIN users u ON u.uid = a.collector_id
+     ORDER BY u.full_name, a.batch_code`,
+  );
+  return (rows as any[]).map(toCollectorBatchAssignment);
+}
+
+export async function createCollectorBatchAssignment(input: { collectorId: string; mccId: string; assignedBy: string; batchCode?: string }): Promise<CollectorBatchAssignment> {
+  const [countRows] = await mysqlPool.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM collector_batch_assignments");
+  const [collectorRows] = await mysqlPool.execute<RowDataPacket[]>("SELECT full_name FROM users WHERE uid = ? AND role = 'MILK_COLLECTOR' LIMIT 1", [input.collectorId]);
+  if (!collectorRows.length) throw new Error("Select a valid milk collector.");
+  const initials = String(collectorRows[0].full_name).trim().split(/\s+/).map((part: string) => part[0]).join("").slice(0, 3).toUpperCase();
+  const batchCode = input.batchCode?.trim() || `BATCH-${String(Number(countRows[0]?.total ?? 0) + 1).padStart(2, "0")}-${initials}`;
+  const assignmentId = `ASSIGN-${Date.now()}`;
+  await mysqlPool.execute(
+    `INSERT INTO collector_batch_assignments (assignment_id, collector_id, mcc_id, batch_code, assigned_by)
+     VALUES (?, ?, ?, ?, ?)`,
+    [assignmentId, input.collectorId, input.mccId, batchCode, input.assignedBy],
+  );
+  const assignments = await listCollectorBatchAssignments();
+  const created = assignments.find((assignment) => assignment.assignmentId === assignmentId);
+  if (!created) throw new Error("The batch assignment was not created.");
+  return created;
 }
 
 function toPayment(row: any): FarmerPayment {
@@ -742,7 +812,7 @@ export async function getScopedPhase2Data(user: AppUser): Promise<{
       ? "SELECT q.* FROM quality_tests q JOIN milk_collections c ON c.collection_id = q.collection_id WHERE c.farmer_id = (SELECT farmer_id FROM farmers WHERE user_id = ?) ORDER BY q.tested_at DESC"
       : "SELECT * FROM quality_tests ORDER BY tested_at DESC";
   const qualityParams = role === "MILK_COLLECTOR" ? [user.uid] : role === "FARMER" ? [user.uid] : [];
-  const batchSelect = "SELECT b.*, GROUP_CONCAT(bc.collection_id ORDER BY bc.collection_id SEPARATOR ',') AS collection_ids FROM milk_batches b LEFT JOIN milk_batch_collections bc ON bc.batch_id = b.batch_id";
+  const batchSelect = "SELECT b.*, u.full_name AS collector_name, GROUP_CONCAT(bc.collection_id ORDER BY bc.collection_id SEPARATOR ',') AS collection_ids FROM milk_batches b LEFT JOIN users u ON u.uid = b.collector_id LEFT JOIN milk_batch_collections bc ON bc.batch_id = b.batch_id";
   const [farmerRows, animalRows, collectionRows, vetRows, qualityRows, batchRows, paymentRows, settingRows, requestRows, mccRows, breedRows] = await Promise.all([
     mysqlPool.execute(farmerQuery, farmerParams),
     mysqlPool.execute(animalQuery, role === "FARMER" ? [user.uid] : role === "MILK_COLLECTOR" ? [user.uid, user.uid] : []),
@@ -1050,8 +1120,8 @@ export async function createBatchQualityTest(input: QualityTest & { batchId: str
       throw new Error("Organoleptic result, lactometer reading, and alcohol test result are required.");
     }
     const failedParameter = input.organolepticResult === "FAIL" || input.alcoholTestResult === "FAIL" || input.adulterationDetected;
-    if (failedParameter && !input.comment?.trim()) {
-      throw new Error("Add the failed parameter details and comment before rejecting this batch.");
+    if (!input.comment?.trim()) {
+      throw new Error("A comment is required for the selected batch decision.");
     }
     const result = failedParameter || input.result === "FAIL" ? "REJECTED" : input.result === "PASS" ? "ACCEPTED" : "PENDING";
     const connection = await mysqlPool.getConnection();
@@ -1115,14 +1185,48 @@ export async function createBatch(input: MilkBatch): Promise<void> {
   const connection = await mysqlPool.getConnection();
   try {
     await connection.beginTransaction();
+    const [collectorRows] = await connection.execute<RowDataPacket[]>(
+      "SELECT uid, collector_batch_code FROM users WHERE uid = ? AND role = 'MILK_COLLECTOR' LIMIT 1",
+      [input.createdBy],
+    );
+    const collector = collectorRows[0];
+    const collectorId = input.collectorId ?? (collector ? String(collector.uid) : null);
+    const parentBatchCode = input.parentBatchCode ?? (collector?.collector_batch_code ? String(collector.collector_batch_code) : null);
+    if (collectorId) {
+      const [assignmentRows] = await connection.execute<RowDataPacket[]>(
+        "SELECT assignment_id FROM collector_batch_assignments WHERE collector_id = ? AND batch_code = ? AND status = 'ACTIVE' LIMIT 1",
+        [collectorId, parentBatchCode],
+      );
+      if (!assignmentRows.length) throw new Error("This batch is not assigned to the collector by the MCC Manager.");
+    }
+    const batchId = collectorId && parentBatchCode ? parentBatchCode : input.batchId;
+    const [existingBatchRows] = await connection.execute<RowDataPacket[]>(
+      "SELECT status FROM milk_batches WHERE batch_id = ? LIMIT 1",
+      [batchId],
+    );
+    if (existingBatchRows[0] && existingBatchRows[0].status !== "OPEN") {
+      throw new Error("This assigned batch is already closed and cannot receive more milk.");
+    }
     await connection.execute(
-      `INSERT INTO milk_batches (batch_id, mcc_id, batch_date, total_litres, destination, status, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [input.batchId, input.mccId, input.batchDate, input.totalLitres, input.destination ?? null, input.status, input.createdBy],
+      `INSERT INTO milk_batches (batch_id, mcc_id, collector_id, parent_batch_code, batch_date, total_litres, destination, status, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE destination = COALESCE(VALUES(destination), destination)`,
+      [batchId, input.mccId, collectorId, parentBatchCode, input.batchDate, 0, input.destination ?? null, input.status, input.createdBy],
     );
     for (const collectionId of input.collectionIds ?? []) {
-      await connection.execute("INSERT INTO milk_batch_collections (batch_id, collection_id) VALUES (?, ?)", [input.batchId, collectionId]);
+      await connection.execute("INSERT IGNORE INTO milk_batch_collections (batch_id, collection_id) VALUES (?, ?)", [batchId, collectionId]);
     }
+    await connection.execute(
+      `UPDATE milk_batches b
+       SET b.total_litres = (
+         SELECT COALESCE(SUM(c.litres), 0)
+         FROM milk_batch_collections bc
+         JOIN milk_collections c ON c.collection_id = bc.collection_id
+         WHERE bc.batch_id = b.batch_id
+       )
+       WHERE b.batch_id = ?`,
+      [batchId],
+    );
 
     await connection.commit();
   } catch (error) {
@@ -1131,6 +1235,53 @@ export async function createBatch(input: MilkBatch): Promise<void> {
   } finally {
     connection.release();
   }
+}
+
+  export type CollectorBatchApproval = MilkBatch & { collectorName: string; collectorBatchCode?: string };
+
+  export async function listCollectorBatchApprovals(): Promise<CollectorBatchApproval[]> {
+    const [rows] = await mysqlPool.execute<RowDataPacket[]>(
+      `SELECT b.*, u.full_name AS collector_name, u.collector_batch_code,
+              GROUP_CONCAT(DISTINCT f.full_name ORDER BY f.full_name SEPARATOR ',') AS farmer_names,
+              GROUP_CONCAT(bc.collection_id ORDER BY bc.collection_id SEPARATOR ',') AS collection_ids
+       FROM milk_batches b
+       LEFT JOIN users u ON u.uid = b.collector_id OR (b.collector_id IS NULL AND u.uid = b.created_by)
+       LEFT JOIN milk_batch_collections bc ON bc.batch_id = b.batch_id
+       LEFT JOIN milk_collections mc ON mc.collection_id = bc.collection_id
+       LEFT JOIN farmers f ON f.farmer_id = mc.farmer_id
+       WHERE u.role = 'MILK_COLLECTOR'
+       GROUP BY b.id
+       ORDER BY u.full_name, b.batch_date DESC, b.id DESC`,
+    );
+    return (rows as any[]).map((row) => ({ ...toBatch(row), collectorName: String(row.collector_name ?? "Unknown collector"), collectorBatchCode: row.collector_batch_code ? String(row.collector_batch_code) : undefined, farmerNames: row.farmer_names ? String(row.farmer_names).split(",") : [] }));
+  }
+
+  export async function decideCollectorBatches(input: { batchIds: string[]; status: "ACCEPTED" | "REJECTED"; comment: string; approvedBy: string }): Promise<void> {
+    const batchIds = [...new Set(input.batchIds.map((id) => id.trim()).filter(Boolean))];
+    if (!batchIds.length) throw new Error("Select at least one sub-batch.");
+    if (input.status === "REJECTED" && !input.comment.trim()) throw new Error("A rejection comment is required.");
+    const connection = await mysqlPool.getConnection();
+    try {
+      await connection.beginTransaction();
+      for (const batchId of batchIds) {
+        const [batches] = await connection.execute<RowDataPacket[]>("SELECT batch_id FROM milk_batches WHERE batch_id = ? LIMIT 1", [batchId]);
+        if (!batches.length) throw new Error(`Batch ${batchId} was not found.`);
+        await connection.execute(
+          "UPDATE milk_batches SET status = ?, approval_comment = ?, approved_by = ?, approved_at = NOW() WHERE batch_id = ?",
+          [input.status, input.comment.trim() || null, input.approvedBy, batchId],
+        );
+        await connection.execute(
+          "UPDATE milk_collections SET mcc_acceptance_status = ?, acceptance_status = ?, mcc_comment = ? WHERE collection_id IN (SELECT collection_id FROM milk_batch_collections WHERE batch_id = ?)",
+          [input.status, input.status, input.comment.trim() || null, batchId],
+        );
+      }
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
 }
 
 export async function deleteBatch(batchId: string, user: AppUser): Promise<void> {
@@ -1196,6 +1347,62 @@ export async function createPayment(input: FarmerPayment): Promise<void> {
     `INSERT INTO farmer_payments (payment_id, farmer_id, period_start, period_end, litres, rate_per_litre, amount, status, processed_by)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [input.paymentId, input.farmerId, input.periodStart, input.periodEnd, input.litres, input.ratePerLitre, input.amount, input.status, input.processedBy],
+  );
+}
+
+export type CollectorPaymentReport = {
+  paymentId: string;
+  collectorId: string;
+  collectorName: string;
+  periodStart: string;
+  periodEnd: string;
+  litres: number;
+  amount: number;
+  status: "PENDING" | "PAID";
+  paidAt?: string;
+};
+
+export async function listCollectorPayments(): Promise<CollectorPaymentReport[]> {
+  const [rows] = await mysqlPool.execute<RowDataPacket[]>(
+    `SELECT u.uid AS collector_id, u.full_name AS collector_name,
+            COALESCE(SUM(c.litres), 0) AS litres,
+            COALESCE(SUM(c.litres * CAST((SELECT value_text FROM settings WHERE key_name = 'milkPrice') AS DECIMAL(10,2)) *
+              CAST((SELECT value_text FROM settings WHERE key_name = 'collectorSharePercent') AS DECIMAL(10,2)) / 100), 0) AS amount,
+            cp.payment_id, cp.status, cp.paid_at
+     FROM users u
+     LEFT JOIN milk_collections c ON c.collected_by = u.uid
+       AND c.collection_source = 'FARMER_COLLECTION_CHAIN'
+       AND c.mcc_acceptance_status = 'ACCEPTED'
+       AND c.collection_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+       AND c.collection_date < DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+     LEFT JOIN collector_payments cp ON cp.collector_id = u.uid
+       AND cp.period_start = DATE_FORMAT(CURDATE(), '%Y-%m-01')
+       AND cp.period_end = CURDATE()
+     WHERE u.role = 'MILK_COLLECTOR' AND u.status = 'ACTIVE'
+     GROUP BY u.uid, u.full_name, cp.payment_id, cp.status, cp.paid_at
+     HAVING litres > 0
+     ORDER BY u.full_name`,
+  );
+  return rows.map((row) => ({
+    paymentId: String(row.payment_id ?? `COLLECTOR-PAY-${row.collector_id}-${new Date().toISOString().slice(0, 10)}`),
+    collectorId: String(row.collector_id),
+    collectorName: String(row.collector_name),
+    periodStart: new Date().toISOString().slice(0, 8) + "01",
+    periodEnd: new Date().toISOString().slice(0, 10),
+    litres: Number(row.litres),
+    amount: Number(row.amount),
+    status: (row.status ?? "PENDING") as "PENDING" | "PAID",
+    paidAt: row.paid_at ? new Date(row.paid_at).toISOString() : undefined,
+  }));
+}
+
+export async function markCollectorPaymentPaid(payment: CollectorPaymentReport, approvedBy: string): Promise<void> {
+  await mysqlPool.execute(
+    `INSERT INTO collector_payments
+      (payment_id, collector_id, period_start, period_end, litres, amount, status, paid_at, approved_by)
+     VALUES (?, ?, ?, ?, ?, ?, 'PAID', NOW(), ?)
+     ON DUPLICATE KEY UPDATE litres = VALUES(litres), amount = VALUES(amount), status = 'PAID', paid_at = NOW(), approved_by = VALUES(approved_by)`,
+    [payment.paymentId, payment.collectorId, payment.periodStart, payment.periodEnd, payment.litres, payment.amount, approvedBy],
   );
 }
 

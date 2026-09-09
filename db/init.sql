@@ -27,6 +27,16 @@ UPDATE users SET username = CASE uid
   ELSE CONCAT('user_', id)
 END WHERE username IS NULL OR username = '';
 ALTER TABLE users MODIFY COLUMN username VARCHAR(100) NOT NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS collector_batch_code VARCHAR(100) NULL UNIQUE;
+UPDATE users
+SET collector_batch_code = CONCAT(
+  'BATCH-', LPAD(id, 2, '0'), '-',
+  UPPER(CONCAT(
+    LEFT(SUBSTRING_INDEX(TRIM(full_name), ' ', 1), 1),
+    LEFT(SUBSTRING_INDEX(TRIM(full_name), ' ', -1), 1)
+  ))
+)
+WHERE role = 'MILK_COLLECTOR' AND (collector_batch_code IS NULL OR collector_batch_code = '');
 
 CREATE TABLE IF NOT EXISTS mccs (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -305,14 +315,40 @@ CREATE TABLE IF NOT EXISTS milk_batches (
   id INT AUTO_INCREMENT PRIMARY KEY,
   batch_id VARCHAR(100) NOT NULL UNIQUE,
   mcc_id VARCHAR(50) NOT NULL,
+  collector_id VARCHAR(100) NULL,
+  parent_batch_code VARCHAR(100) NULL,
   batch_date DATE NOT NULL,
   total_litres DECIMAL(10,2) NOT NULL DEFAULT 0,
   destination VARCHAR(255),
   status VARCHAR(20) NOT NULL DEFAULT 'OPEN',
+  approval_comment TEXT NULL,
+  approved_by VARCHAR(100) NULL,
+  approved_at DATETIME NULL,
   created_by VARCHAR(100) NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_batches_date (batch_date),
   CONSTRAINT fk_batches_mcc FOREIGN KEY (mcc_id) REFERENCES mccs(mcc_id)
+);
+ALTER TABLE milk_batches ADD COLUMN IF NOT EXISTS collector_id VARCHAR(100) NULL;
+ALTER TABLE milk_batches ADD COLUMN IF NOT EXISTS parent_batch_code VARCHAR(100) NULL;
+ALTER TABLE milk_batches ADD COLUMN IF NOT EXISTS approval_comment TEXT NULL;
+ALTER TABLE milk_batches ADD COLUMN IF NOT EXISTS approved_by VARCHAR(100) NULL;
+ALTER TABLE milk_batches ADD COLUMN IF NOT EXISTS approved_at DATETIME NULL;
+UPDATE milk_batches b
+JOIN users u ON u.uid = b.created_by AND u.role = 'MILK_COLLECTOR'
+SET b.collector_id = u.uid, b.parent_batch_code = u.collector_batch_code
+WHERE b.collector_id IS NULL;
+
+CREATE TABLE IF NOT EXISTS collector_batch_assignments (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  assignment_id VARCHAR(100) NOT NULL UNIQUE,
+  collector_id VARCHAR(100) NOT NULL,
+  mcc_id VARCHAR(50) NOT NULL,
+  batch_code VARCHAR(100) NOT NULL UNIQUE,
+  status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+  assigned_by VARCHAR(100) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_collector_batch_assignments_collector (collector_id, status)
 );
 
 CREATE TABLE IF NOT EXISTS farmer_payments (
@@ -330,6 +366,21 @@ CREATE TABLE IF NOT EXISTS farmer_payments (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_payments_farmer (farmer_id),
   CONSTRAINT fk_payments_farmer FOREIGN KEY (farmer_id) REFERENCES farmers(farmer_id)
+);
+
+CREATE TABLE IF NOT EXISTS collector_payments (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  payment_id VARCHAR(100) NOT NULL UNIQUE,
+  collector_id VARCHAR(100) NOT NULL,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  litres DECIMAL(10,2) NOT NULL DEFAULT 0,
+  amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+  paid_at DATETIME NULL,
+  approved_by VARCHAR(100),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_collector_payment_period (collector_id, period_start, period_end)
 );
 
 CREATE TABLE IF NOT EXISTS expense_types (
