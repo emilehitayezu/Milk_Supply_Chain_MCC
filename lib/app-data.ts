@@ -65,8 +65,6 @@ export type AppState = {
   };
 };
 
-export const STORAGE_KEY = "milk-system-demo-store";
-
 export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
   SUPER_ADMIN: [
     "dashboard.view",
@@ -222,65 +220,35 @@ export const defaultState: AppState = {
 
 export async function readAppState(): Promise<AppState> {
   if (typeof window === "undefined") {
-    return defaultState;
+    throw new Error("Application state can only be loaded from the database in the browser.");
   }
 
-  try {
-    const response = await fetch("/api/system", { cache: "no-store" });
-    if (response.ok) {
-      const payload = (await response.json()) as AppState;
-      if (payload?.users && payload?.mccs && payload?.auditLogs) {
-        return payload;
-      }
-    }
-  } catch {
-    // fall through to local fallback
+  const response = await fetch("/api/system", { cache: "no-store" });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? "The application data could not be loaded from MySQL.");
   }
 
-  const rawValue = window.localStorage.getItem(STORAGE_KEY);
-
-  if (!rawValue) {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultState));
-    return defaultState;
+  const payload = (await response.json()) as AppState;
+  if (!payload?.users || !payload?.mccs || !payload?.auditLogs || !payload?.settings) {
+    throw new Error("The database returned an invalid application state.");
   }
-
-  try {
-    const parsed = JSON.parse(rawValue) as Partial<AppState>;
-    return {
-      users: parsed.users ?? defaultState.users,
-      mccs: parsed.mccs ?? defaultState.mccs,
-      auditLogs: parsed.auditLogs ?? defaultState.auditLogs,
-      settings: {
-        ...defaultState.settings,
-        ...(parsed.settings ?? {}),
-      },
-    };
-  } catch {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultState));
-    return defaultState;
-  }
+  return payload;
 }
 
 export async function writeAppState(state: AppState): Promise<void> {
   if (typeof window === "undefined") {
-    return;
+    throw new Error("Application state can only be saved to the database from the browser.");
   }
 
-  try {
-    const response = await fetch("/api/system", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "saveState", state }),
-    });
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-      throw new Error(payload?.error ?? "The changes could not be saved to MySQL.");
-    }
-  } catch (error) {
-    if (error instanceof Error) {
-      throw error;
-    }
-    throw new Error("The changes could not be saved to MySQL. Check that the database is available and try again.");
+  const response = await fetch("/api/system", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "saveState", state }),
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? "The changes could not be saved to MySQL.");
   }
 }
 

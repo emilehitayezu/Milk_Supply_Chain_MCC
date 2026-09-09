@@ -44,6 +44,7 @@ import {
   listPayments,
   listQualityTests,
   listVeterinaryRecords,
+  findCowOwnerByTag,
   verifyFarmerForCollector,
   listCollectors,
   updateFarmerForCollector,
@@ -156,6 +157,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ collectors: await listCollectors() });
     }
 
+    if (body.action === "findCowOwnerByTag") {
+      const actor = await getUserByUid(body.userId ?? "");
+      if (!actor || actor.role !== "VETERINARY_OFFICER") {
+        return NextResponse.json({ error: "Only veterinary officers can search cow owners." }, { status: 403 });
+      }
+      const result = await findCowOwnerByTag(String(body.data?.tagNumber ?? ""));
+      if (!result) return NextResponse.json({ error: "No active cow was found with that tag number." }, { status: 404 });
+      return NextResponse.json(result);
+    }
+
     if (body.action === "updateUser") {
       const actor = await getUserByUid(body.userId ?? "");
       if (!actor || !["SUPER_ADMIN", "ADMIN"].includes(actor.role)) return NextResponse.json({ error: "Only administrators can edit users." }, { status: 403 });
@@ -252,6 +263,9 @@ export async function POST(request: Request) {
     if (["updateFarmer", "deleteFarmer", "updateAnimal", "deleteAnimal"].includes(body.action ?? "")) {
       const actor = await getUserByUid(body.userId ?? "");
       if (!actor || !["MCC_OFFICER", "MILK_COLLECTOR"].includes(actor.role)) return NextResponse.json({ error: "Only MCC officers and collectors can manage these records." }, { status: 403 });
+      if (actor.role === "MILK_COLLECTOR" && ["updateFarmer", "deleteFarmer"].includes(body.action ?? "")) {
+        return NextResponse.json({ error: "Collectors can edit cows but cannot edit or delete farmer records." }, { status: 403 });
+      }
       const allFarmers = actor.role === "MCC_OFFICER";
       if (body.action === "updateFarmer") await updateFarmerForCollector(body.data, actor.uid, allFarmers);
       if (body.action === "deleteFarmer") await deleteFarmerForCollector(String(body.data?.farmerId ?? ""), actor.uid, allFarmers);
@@ -318,10 +332,15 @@ export async function POST(request: Request) {
     if (body.action === "createCollection") {
       const actor = await getUserByUid(body.userId ?? "");
       if (!actor || !["SUPER_ADMIN", "ADMIN", "MCC_MANAGER", "MCC_OFFICER", "MILK_COLLECTOR"].includes(actor.role)) return NextResponse.json({ error: "You are not allowed to record collections." }, { status: 403 });
+      const collectionSource = actor.role === "MILK_COLLECTOR" ? "FARMER_COLLECTION_CHAIN" : String(body.data?.collectionSource ?? "");
+      if (!["FARMER_COLLECTION_CHAIN", "DIRECT_MCC_COLLECTION"].includes(collectionSource)) {
+        return NextResponse.json({ error: "A valid collection source is required." }, { status: 400 });
+      }
       await createCollection({
         ...body.data,
+        collectionSource,
         acceptanceStatus: "PENDING",
-        collectorAcceptanceStatus: actor.role === "MILK_COLLECTOR" ? "ACCEPTED" : body.data.collectorAcceptanceStatus,
+        collectorAcceptanceStatus: actor.role === "MILK_COLLECTOR" || collectionSource === "DIRECT_MCC_COLLECTION" ? "ACCEPTED" : body.data.collectorAcceptanceStatus,
         mccAcceptanceStatus: "PENDING",
         collectedBy: actor.uid,
       });
@@ -383,7 +402,7 @@ export async function POST(request: Request) {
 
     if (body.action === "createQualityTest") {
       const actor = await getUserByUid(body.userId ?? "");
-      if (!actor || !["SUPER_ADMIN", "ADMIN", "MCC_MANAGER", "MCC_OFFICER"].includes(actor.role)) return NextResponse.json({ error: "You are not allowed to record quality tests." }, { status: 403 });
+      if (!actor || !["SUPER_ADMIN", "ADMIN", "MCC_MANAGER", "MCC_OFFICER", "MILK_COLLECTOR"].includes(actor.role)) return NextResponse.json({ error: "You are not allowed to record quality tests." }, { status: 403 });
       await createQualityTest(body.data);
       await appendAuditEntryToDatabase({
         userId: body.userId ?? "system",

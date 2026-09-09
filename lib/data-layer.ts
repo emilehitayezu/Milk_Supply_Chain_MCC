@@ -572,6 +572,7 @@ function toCollection(row: any): MilkCollection {
     animalId: row.animal_id ? String(row.animal_id) : undefined,
     mccId: String(row.mcc_id),
     collectionDate: new Date(row.collection_date).toISOString(),
+    collectionSource: (row.collection_source ?? "FARMER_COLLECTION_CHAIN") as MilkCollection["collectionSource"],
     litres: Number(row.litres),
     fatPercentage: row.fat_percentage === null ? undefined : Number(row.fat_percentage),
     temperatureC: row.temperature_c === null ? undefined : Number(row.temperature_c),
@@ -608,6 +609,10 @@ function toQualityTest(row: any): QualityTest {
     acidity: row.acidity === null ? undefined : Number(row.acidity),
     density: row.density === null ? undefined : Number(row.density),
     adulterationDetected: Boolean(row.adulteration_detected),
+    organolepticResult: row.organoleptic_result ? String(row.organoleptic_result) as QualityTest["organolepticResult"] : undefined,
+    lactometerReading: row.lactometer_reading === null ? undefined : Number(row.lactometer_reading),
+    alcoholTestResult: row.alcohol_test_result ? String(row.alcohol_test_result) as QualityTest["alcoholTestResult"] : undefined,
+    comment: row.comment ? String(row.comment) : undefined,
     result: row.result as QualityTest["result"],
     testedBy: String(row.tested_by),
     testedAt: String(row.tested_at),
@@ -878,6 +883,22 @@ export async function verifyFarmerForCollector(farmerId: string, collectorId: st
   return row ? toFarmer(row) : null;
 }
 
+export async function findCowOwnerByTag(tagNumber: string): Promise<{ animal: Animal; farmer: Farmer } | null> {
+  const normalizedTag = tagNumber.trim();
+  if (!normalizedTag) return null;
+  const [rows] = await mysqlPool.execute(
+    `SELECT a.*, f.*, m.name AS mcc_name
+     FROM animals a
+     JOIN farmers f ON f.farmer_id = a.farmer_id
+     LEFT JOIN mccs m ON m.mcc_id = f.mcc_id
+     WHERE LOWER(a.tag_number) = LOWER(?) AND a.status = 'ACTIVE' AND f.status = 'ACTIVE'
+     LIMIT 1`,
+    [normalizedTag],
+  );
+  const row = (rows as any[])[0];
+  return row ? { animal: toAnimal(row), farmer: toFarmer(row) } : null;
+}
+
 export async function createAnimal(input: Omit<Animal, "createdAt">): Promise<void> {
   if (!input.farmerId || !input.tagNumber || !input.breed || !input.sex || !input.status) {
     throw new Error("Farmer ID, cow tag number, breed, sex, and status are required.");
@@ -927,7 +948,7 @@ export async function deleteAnimalForCollector(animalId: string, collectorId: st
 }
 
 export async function createCollection(input: MilkCollection): Promise<void> {
-  if (!input.collectionId || !input.farmerId || !input.mccId || !input.collectionDate || input.litres <= 0 || input.fatPercentage === undefined || input.temperatureC === undefined || !input.acceptanceStatus || !input.collectedBy) {
+  if (!input.collectionId || !input.farmerId || !input.mccId || !input.collectionDate || !input.collectionSource || input.litres <= 0 || input.fatPercentage === undefined || input.temperatureC === undefined || !input.acceptanceStatus || !input.collectedBy) {
     throw new Error("Farmer, MCC, collection date, litres, fat percentage, temperature, status, and collector are required.");
   }
   if (input.animalId) {
@@ -938,9 +959,9 @@ export async function createCollection(input: MilkCollection): Promise<void> {
     if (rows.length) throw new Error("Milk cannot be collected from a cow under treatment or milk withdrawal.");
   }
   await mysqlPool.execute(
-    `INSERT INTO milk_collections (collection_id, farmer_id, animal_id, mcc_id, collection_date, litres, fat_percentage, temperature_c, acceptance_status, collector_acceptance_status, mcc_acceptance_status, notes, collected_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [input.collectionId, input.farmerId, input.animalId ?? null, input.mccId, input.collectionDate, input.litres, input.fatPercentage ?? null, input.temperatureC ?? null, "PENDING", input.collectorAcceptanceStatus, "PENDING", input.notes ?? null, input.collectedBy],
+    `INSERT INTO milk_collections (collection_id, farmer_id, animal_id, mcc_id, collection_date, collection_source, litres, fat_percentage, temperature_c, acceptance_status, collector_acceptance_status, mcc_acceptance_status, notes, collected_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [input.collectionId, input.farmerId, input.animalId ?? null, input.mccId, input.collectionDate, input.collectionSource, input.litres, input.fatPercentage ?? null, input.temperatureC ?? null, "PENDING", input.collectorAcceptanceStatus, "PENDING", input.notes ?? null, input.collectedBy],
   );
 }
 
@@ -986,7 +1007,11 @@ export async function clearVeterinaryRecord(recordId: string): Promise<void> {
 }
 
 export async function createQualityTest(input: QualityTest): Promise<void> {
-  if (!input.collectionId) throw new Error("A collection must be selected for this quality test.");
+  if (!input.collectionId || !input.organolepticResult || input.lactometerReading === undefined || !input.alcoholTestResult) {
+    throw new Error("Collection, organoleptic result, lactometer reading, and alcohol test result are required.");
+  }
+  const failedLevelOne = input.organolepticResult === "FAIL" || input.alcoholTestResult === "FAIL" || input.adulterationDetected;
+  const result = failedLevelOne ? "FAIL" : input.result;
   const connection = await mysqlPool.getConnection();
   try {
     await connection.beginTransaction();
@@ -1002,13 +1027,13 @@ export async function createQualityTest(input: QualityTest): Promise<void> {
     );
     if (restricted.length) throw new Error("Milk from a cow under treatment cannot be accepted.");
     await connection.execute(
-      `INSERT INTO quality_tests (test_id, collection_id, acidity, density, adulteration_detected, result, tested_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [input.testId, input.collectionId, input.acidity ?? null, input.density ?? null, input.adulterationDetected, input.result, input.testedBy],
+      `INSERT INTO quality_tests (test_id, collection_id, acidity, density, adulteration_detected, organoleptic_result, lactometer_reading, alcohol_test_result, comment, result, tested_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [input.testId, input.collectionId, input.acidity ?? null, input.density ?? null, input.adulterationDetected, input.organolepticResult, input.lactometerReading, input.alcoholTestResult, input.comment ?? null, result, input.testedBy],
     );
     await connection.execute(
       "UPDATE milk_collections SET acceptance_status = ?, mcc_acceptance_status = ?, mcc_comment = ? WHERE collection_id = ?",
-      [input.result === "PASS" ? "ACCEPTED" : input.result === "FAIL" ? "REJECTED" : "PENDING", input.result === "PASS" ? "ACCEPTED" : input.result === "FAIL" ? "REJECTED" : "PENDING", input.comment ?? null, input.collectionId],
+      [result === "PASS" ? "ACCEPTED" : "REJECTED", result === "PASS" ? "ACCEPTED" : "REJECTED", input.comment ?? null, input.collectionId],
     );
     await connection.commit();
   } catch (error) {
@@ -1021,7 +1046,14 @@ export async function createQualityTest(input: QualityTest): Promise<void> {
 }
 
 export async function createBatchQualityTest(input: QualityTest & { batchId: string }): Promise<void> {
-    const result = input.result === "PASS" ? "ACCEPTED" : input.result === "FAIL" ? "REJECTED" : "PENDING";
+    if (!input.organolepticResult || input.lactometerReading === undefined || !input.alcoholTestResult) {
+      throw new Error("Organoleptic result, lactometer reading, and alcohol test result are required.");
+    }
+    const failedParameter = input.organolepticResult === "FAIL" || input.alcoholTestResult === "FAIL" || input.adulterationDetected;
+    if (failedParameter && !input.comment?.trim()) {
+      throw new Error("Add the failed parameter details and comment before rejecting this batch.");
+    }
+    const result = failedParameter || input.result === "FAIL" ? "REJECTED" : input.result === "PASS" ? "ACCEPTED" : "PENDING";
     const connection = await mysqlPool.getConnection();
     try {
       await connection.beginTransaction();
@@ -1054,14 +1086,14 @@ export async function createBatchQualityTest(input: QualityTest & { batchId: str
         );
         if (existingTests.length) {
           await connection.execute(
-            "UPDATE quality_tests SET acidity = ?, density = ?, adulteration_detected = ?, result = ?, tested_by = ? WHERE test_id = ?",
-            [input.acidity ?? null, input.density ?? null, input.adulterationDetected, input.result, input.testedBy, existingTests[0].test_id],
+            "UPDATE quality_tests SET acidity = ?, density = ?, adulteration_detected = ?, organoleptic_result = ?, lactometer_reading = ?, alcohol_test_result = ?, comment = ?, result = ?, tested_by = ? WHERE test_id = ?",
+            [input.acidity ?? null, input.density ?? null, input.adulterationDetected, input.organolepticResult, input.lactometerReading, input.alcoholTestResult, input.comment ?? null, failedParameter ? "FAIL" : input.result, input.testedBy, existingTests[0].test_id],
           );
         } else {
           await connection.execute(
-            `INSERT INTO quality_tests (test_id, collection_id, acidity, density, adulteration_detected, result, tested_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [`${input.testId}-${String(collection.collection_id)}`, collection.collection_id, input.acidity ?? null, input.density ?? null, input.adulterationDetected, input.result, input.testedBy],
+            `INSERT INTO quality_tests (test_id, collection_id, acidity, density, adulteration_detected, organoleptic_result, lactometer_reading, alcohol_test_result, comment, result, tested_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [`${input.testId}-${String(collection.collection_id)}`, collection.collection_id, input.acidity ?? null, input.density ?? null, input.adulterationDetected, input.organolepticResult, input.lactometerReading, input.alcoholTestResult, input.comment ?? null, failedParameter ? "FAIL" : input.result, input.testedBy],
           );
         }
         await connection.execute(

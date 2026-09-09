@@ -105,6 +105,7 @@ export default function OperationsPage({ managementOnly = false }: { managementO
   const [recordsSearch, setRecordsSearch] = useState("");
   const [recordsSort, setRecordsSort] = useState<"newest" | "oldest">("newest");
   const [recordsStatus, setRecordsStatus] = useState<"ALL" | "ACCEPTED" | "REJECTED" | "PENDING">("ALL");
+  const [recordsSource, setRecordsSource] = useState<"ALL" | MilkCollection["collectionSource"]>("ALL");
   const [recordsFrom, setRecordsFrom] = useState("");
   const [recordsTo, setRecordsTo] = useState("");
   const [expandedFarmer, setExpandedFarmer] = useState<string | null>(null);
@@ -119,15 +120,19 @@ export default function OperationsPage({ managementOnly = false }: { managementO
   const [animalForm, setAnimalForm] = useState({ farmerId: "", tagNumber: "", breed: "", sex: "FEMALE" as Animal["sex"] });
   const [verifiedFarmer, setVerifiedFarmer] = useState<Farmer | null>(null);
   const [vetFarmerId, setVetFarmerId] = useState("");
+  const [vetTagSearch, setVetTagSearch] = useState("");
+  const [vetTagSearchMessage, setVetTagSearchMessage] = useState("");
+  const [vetTagSearchResult, setVetTagSearchResult] = useState<{ animal: Animal; farmer: Farmer } | null>(null);
   const [verificationDialog, setVerificationDialog] = useState<{
     type: "success" | "error";
     title: string;
     message: string;
     farmer?: Farmer;
   } | null>(null);
-  const [collectionForm, setCollectionForm] = useState({ farmerId: "", animalId: "", litres: "", fatPercentage: "", temperatureC: "" });
+  const [collectionForm, setCollectionForm] = useState({ farmerId: "", animalId: "", litres: "", fatPercentage: "", temperatureC: "", collectionSource: "FARMER_COLLECTION_CHAIN" as MilkCollection["collectionSource"] });
   const [vetForm, setVetForm] = useState({ animalId: "", visitDate: new Date().toISOString().slice(0, 10), diagnosis: "", treatment: "", medicine: "", withdrawalUntil: "" });
-  const [qualityForm, setQualityForm] = useState({ collectionId: "", batchId: "", acidity: "", density: "", adulterationDetected: false, result: "PASS" as QualityTest["result"], comment: "" });
+  const [qualityForm, setQualityForm] = useState({ collectionId: "", batchId: "", acidity: "", density: "", organolepticResult: "PASS" as "PASS" | "FAIL", lactometerReading: "", alcoholTestResult: "PASS" as "PASS" | "FAIL", adulterationDetected: false, result: "PASS" as QualityTest["result"], comment: "" });
+  const [mccQualityTarget, setMccQualityTarget] = useState<"DIRECT_COLLECTION" | "BATCH">("DIRECT_COLLECTION");
   const [batchComments, setBatchComments] = useState<Record<string, string>>({});
   const [batchForm, setBatchForm] = useState({ totalLitres: "", destination: "", collectionIds: [] as string[] });
   const [paymentForm, setPaymentForm] = useState({ farmerId: "", periodStart: new Date().toISOString().slice(0, 10), periodEnd: new Date().toISOString().slice(0, 10), litres: "", ratePerLitre: "620" });
@@ -198,7 +203,7 @@ export default function OperationsPage({ managementOnly = false }: { managementO
   const canRegisterFarmer = isManagementRole || ["MCC_OFFICER", "MILK_COLLECTOR", "VETERINARY_OFFICER"].includes(currentUser.role);
   const canCollect = ["MCC_OFFICER", "MILK_COLLECTOR"].includes(currentUser.role);
   const canPracticeVeterinary = isManagementRole || currentUser.role === "VETERINARY_OFFICER";
-  const canTestQuality = isManagementRole || currentUser.role === "MCC_OFFICER";
+  const canTestQuality = isManagementRole || ["MCC_OFFICER", "MILK_COLLECTOR"].includes(currentUser.role);
   const canCreateBatch = isManagementRole || currentUser.role === "PROCESSING_INDUSTRY" || currentUser.role === "MILK_COLLECTOR";
   const canViewBatches = canCreateBatch || currentUser.role === "MCC_OFFICER";
   const canCreatePayment = ["SUPER_ADMIN", "ADMIN", "FINANCE_OFFICER"].includes(currentUser.role);
@@ -211,6 +216,34 @@ export default function OperationsPage({ managementOnly = false }: { managementO
   const selectedCollectionFarmer = currentState.farmers.find((farmer) => farmer.farmerId === collectionForm.farmerId);
   const selectedFarmerCows = currentState.animals.filter((animal) => animal.farmerId === collectionForm.farmerId);
   const veterinaryCows = currentState.animals.filter((animal) => animal.farmerId === vetFarmerId);
+  async function searchCowOwnerByTag() {
+    const tagNumber = vetTagSearch.trim();
+    if (!tagNumber) {
+      setVetTagSearchMessage("Enter a cow tag number.");
+      return;
+    }
+    setVetTagSearchMessage("");
+    try {
+      const response = await fetch("/api/system", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "findCowOwnerByTag", userId: currentUser.uid, data: { tagNumber } }),
+      });
+      const result = await response.json() as { animal?: Animal; farmer?: Farmer; error?: string };
+      if (!response.ok || !result.animal || !result.farmer) {
+        setVetTagSearchResult(null);
+        setVetTagSearchMessage(result.error ?? "No cow was found with that tag number.");
+        return;
+      }
+      setVetTagSearchResult({ animal: result.animal, farmer: result.farmer });
+      setVetFarmerId(result.farmer.farmerId);
+      setVetForm((current) => ({ ...current, animalId: result.animal!.animalId }));
+      setVetTagSearchMessage(`Owner found: ${result.farmer.fullName}.`);
+    } catch {
+      setVetTagSearchResult(null);
+      setVetTagSearchMessage("Cow owner search failed. Please try again.");
+    }
+  }
   const treatmentWarnings = currentState.veterinaryRecords
     .filter((record) => selectedFarmerCows.some((cow) => cow.animalId === record.animalId))
     .filter((record) => record.clearanceStatus !== "CLEARED" && (!record.withdrawalUntil || record.withdrawalUntil > new Date().toISOString().slice(0, 10)));
@@ -268,6 +301,8 @@ export default function OperationsPage({ managementOnly = false }: { managementO
       return !query || [farmer?.fullName, farmer?.phone, farmer?.email].filter(Boolean).some((value) => String(value).toLowerCase().includes(query));
     })
     .filter(({ collection }) => recordsStatus === "ALL" || collection.mccAcceptanceStatus === recordsStatus)
+    .filter(({ collection }) => recordsSource === "ALL" || collection.collectionSource === recordsSource)
+    .filter(({ collection }) => (!recordsFrom || collection.collectionDate.slice(0, 10) >= recordsFrom) && (!recordsTo || collection.collectionDate.slice(0, 10) <= recordsTo))
     .sort((a, b) => {
       const comparison = new Date(a.collection.collectionDate).getTime() - new Date(b.collection.collectionDate).getTime();
       return recordsSort === "newest" ? -comparison : comparison;
@@ -285,10 +320,15 @@ export default function OperationsPage({ managementOnly = false }: { managementO
       '"': "&quot;",
       "'": "&#39;",
     })[character] ?? character);
+    const maskPhone = (value: string) => {
+      const digits = value.replace(/\D/g, "");
+      if (digits.length < 5) return "********";
+      return `${digits.slice(0, 3)}${"*".repeat(Math.max(1, digits.length - 5))}${digits.slice(-2)}`;
+    };
     const farmerRows = collectorRecords.map(({ farmer, cows }) => `
       <tr>
-        <td><strong>${escapeHtml(farmer.fullName)}</strong><br><span>${escapeHtml(farmer.email ?? "No email")}</span></td>
-        <td>${escapeHtml(farmer.phone)}</td>
+        <td><strong>${escapeHtml(farmer.fullName)}</strong></td>
+        <td>${escapeHtml(maskPhone(farmer.phone))}</td>
         <td>${escapeHtml(new Date(farmer.createdAt).toLocaleDateString())}</td>
         <td>${cows.length} ${cows.length === 1 ? "cow" : "cows"}<br><small>${cows.map((cow) => `${escapeHtml(cow.tagNumber)} · ${escapeHtml(cow.breed || "Breed not provided")} · ${escapeHtml(cow.sex.toLowerCase())}`).join("<br>") || "No cows assigned"}</small></td>
       </tr>
@@ -401,12 +441,12 @@ export default function OperationsPage({ managementOnly = false }: { managementO
         setVerifiedFarmer(null);
       }
 
-      if (action === "createCollection") setCollectionForm({ farmerId: "", animalId: "", litres: "", fatPercentage: "", temperatureC: "" });
+      if (action === "createCollection") setCollectionForm({ farmerId: "", animalId: "", litres: "", fatPercentage: "", temperatureC: "", collectionSource: "FARMER_COLLECTION_CHAIN" });
       if (action === "createVeterinaryRecord") {
         setVetFarmerId("");
         setVetForm({ animalId: "", visitDate: new Date().toISOString().slice(0, 10), diagnosis: "", treatment: "", medicine: "", withdrawalUntil: "" });
       }
-      if (action === "createQualityTest" || action === "createBatchQualityTest") setQualityForm({ collectionId: "", batchId: "", acidity: "", density: "", adulterationDetected: false, result: "PASS", comment: "" });
+      if (action === "createQualityTest" || action === "createBatchQualityTest") setQualityForm({ collectionId: "", batchId: "", acidity: "", density: "", organolepticResult: "PASS", lactometerReading: "", alcoholTestResult: "PASS", adulterationDetected: false, result: "PASS", comment: "" });
       if (action === "createBatch") setBatchForm({ totalLitres: "", destination: "", collectionIds: [] });
       if (action === "createPayment") setPaymentForm({ farmerId: "", periodStart: new Date().toISOString().slice(0, 10), periodEnd: new Date().toISOString().slice(0, 10), litres: "", ratePerLitre: "620" });
       setMessage(success);
@@ -638,6 +678,16 @@ export default function OperationsPage({ managementOnly = false }: { managementO
             ].map(([label, value]) => <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-xs text-slate-500">{label}</p><p className="mt-2 text-2xl font-semibold text-slate-900">{value}</p></div>)}
           </div>
 
+          {currentUser.role === "MCC_OFFICER" && showSection("records") ? (
+            <div className="grid gap-4 md:grid-cols-3 print:hidden">
+              {[
+                ["Milk Collector Collection", currentState.collections.filter((item) => item.collectionSource === "FARMER_COLLECTION_CHAIN" && item.mccAcceptanceStatus !== "REJECTED").reduce((sum, item) => sum + item.litres, 0)],
+                ["Direct MCC Collection", currentState.collections.filter((item) => item.collectionSource === "DIRECT_MCC_COLLECTION" && item.mccAcceptanceStatus !== "REJECTED").reduce((sum, item) => sum + item.litres, 0)],
+                ["Total Milk Received", currentState.collections.filter((item) => item.mccAcceptanceStatus !== "REJECTED").reduce((sum, item) => sum + item.litres, 0)],
+              ].map(([label, litres]) => <div key={label} className="rounded-2xl border border-sky-200 bg-sky-50 p-4"><p className="text-xs text-sky-700">{label}</p><p className="mt-2 text-2xl font-semibold text-sky-950">{Number(litres).toFixed(2)} L</p></div>)}
+            </div>
+          ) : null}
+
           {currentUser.role === "MILK_COLLECTOR" && showSection("records") ? (
             <div className="grid gap-6 lg:grid-cols-2 print:hidden">
               <InteractivePieChart
@@ -751,9 +801,10 @@ export default function OperationsPage({ managementOnly = false }: { managementO
               {pendingCowBatch ? <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4"><p className="font-semibold text-amber-900">OTP authorization requested for {pendingCowBatch.cowCount} cows</p><p className="mt-1 text-sm text-amber-800">One OTP was sent to the farmer phone. Enter the OTP provided by the farmer to register the complete batch. It expires at {new Date(pendingCowBatch.expiresAt).toLocaleTimeString()}.</p><div className="mt-3 flex gap-2"><input inputMode="numeric" maxLength={6} placeholder="6-digit OTP" value={cowBatchOtp} onChange={(e) => setCowBatchOtp(e.target.value.replace(/\D/g, "").slice(0, 6))} className="rounded-xl border px-3 py-2" /><button type="button" disabled={cowBatchOtp.length !== 6} onClick={() => void verifyCowBatchOtp()} className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Verify OTP &amp; Register All</button></div></div> : null}
             </section>
 
-            <form id="milk-collection" className={`${!showSection("milk-collection") || managementOnly || !canCollect ? "hidden " : ""}rounded-2xl border border-slate-200 bg-white p-5 shadow-sm`} onSubmit={(event) => { event.preventDefault(); if (selectedFarmerCows.length && !collectionForm.animalId) { setMessage("Select an eligible cow before recording milk collection."); return; } requestSubmitConfirmation("createCollection", { collectionId: `COL-${Date.now()}`, farmerId: collectionForm.farmerId, animalId: collectionForm.animalId || undefined, mccId: farmerForm.mccId, collectionDate: new Date().toISOString(), litres: Number(collectionForm.litres), fatPercentage: Number(collectionForm.fatPercentage), temperatureC: Number(collectionForm.temperatureC), acceptanceStatus: "PENDING", collectedBy: currentUser.uid }, "Milk collection recorded.", "milk collection"); }}>
+            <form id="milk-collection" className={`${!showSection("milk-collection") || managementOnly || !canCollect ? "hidden " : ""}rounded-2xl border border-slate-200 bg-white p-5 shadow-sm`} onSubmit={(event) => { event.preventDefault(); if (selectedFarmerCows.length && !collectionForm.animalId) { setMessage("Select an eligible cow before recording milk collection."); return; } requestSubmitConfirmation("createCollection", { collectionId: `COL-${Date.now()}`, farmerId: collectionForm.farmerId, animalId: collectionForm.animalId || undefined, mccId: selectedCollectionFarmer?.mccId ?? farmerForm.mccId, collectionDate: new Date().toISOString(), collectionSource: currentUser.role === "MILK_COLLECTOR" ? "FARMER_COLLECTION_CHAIN" : collectionForm.collectionSource, litres: Number(collectionForm.litres), fatPercentage: Number(collectionForm.fatPercentage), temperatureC: Number(collectionForm.temperatureC), acceptanceStatus: "PENDING", collectedBy: currentUser.uid }, "Milk collection recorded.", "milk collection"); }}>
               <h2 className="text-lg font-semibold">Record milk collection</h2>
               <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {currentUser.role === "MCC_OFFICER" ? <select required value={collectionForm.collectionSource} onChange={(e) => setCollectionForm({ ...collectionForm, collectionSource: e.target.value as MilkCollection["collectionSource"] })} className="rounded-xl border px-3 py-2 md:col-span-2"><option value="DIRECT_MCC_COLLECTION">Direct Milk Collection at MCC</option><option value="FARMER_COLLECTION_CHAIN">Milk Collector Collection</option></select> : <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 md:col-span-2">Collection source: Farmer collection chain</p>}
                 <select required value={collectionForm.farmerId} onChange={(e) => setCollectionForm({ ...collectionForm, farmerId: e.target.value, animalId: "" })} className="rounded-xl border px-3 py-2"><option value="">Select farmer</option>{currentState.farmers.map((farmer) => <option key={farmer.farmerId} value={farmer.farmerId}>{farmer.fullName}</option>)}</select>
                 {selectedCollectionFarmer && treatmentWarnings.length ? (
                   <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 md:col-span-2" role="alert">
@@ -783,7 +834,15 @@ export default function OperationsPage({ managementOnly = false }: { managementO
               <h2 className="text-lg font-semibold">Veterinary visit</h2>
               <p className="mt-1 text-sm text-slate-500">Record the cow as under treatment and set the date when milk can safely be collected again.</p>
               <div className="mt-4 grid gap-3 md:grid-cols-2">
-                <select required value={vetFarmerId} onChange={(e) => { setVetFarmerId(e.target.value); setVetForm({ ...vetForm, animalId: "" }); }} className="rounded-xl border px-3 py-2"><option value="">Select farmer</option>{currentState.farmers.map((farmer) => <option key={farmer.farmerId} value={farmer.farmerId}>{farmer.fullName}</option>)}</select>
+                <div className="md:col-span-2 rounded-xl border border-sky-200 bg-sky-50 p-3">
+                  <label className="block text-sm font-medium text-sky-950">Find cow owner by tag number</label>
+                  <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                    <input value={vetTagSearch} onChange={(e) => setVetTagSearch(e.target.value)} placeholder="Enter cow tag number" className="min-w-0 flex-1 rounded-xl border border-sky-200 bg-white px-3 py-2" />
+                    <button type="button" onClick={() => void searchCowOwnerByTag()} className="rounded-xl bg-sky-700 px-4 py-2 text-sm font-medium text-white">Search cow</button>
+                  </div>
+                  {vetTagSearchMessage ? <p className={`mt-2 text-xs ${vetTagSearchResult ? "text-emerald-700" : "text-rose-600"}`}>{vetTagSearchMessage}</p> : null}
+                </div>
+                <select required value={vetFarmerId} onChange={(e) => { setVetFarmerId(e.target.value); setVetTagSearchResult(null); setVetForm({ ...vetForm, animalId: "" }); }} className="rounded-xl border px-3 py-2"><option value="">Select farmer</option>{currentState.farmers.map((farmer) => <option key={farmer.farmerId} value={farmer.farmerId}>{farmer.fullName}</option>)}</select>
                 <select required disabled={!vetFarmerId} value={vetForm.animalId} onChange={(e) => setVetForm({ ...vetForm, animalId: e.target.value })} className="rounded-xl border px-3 py-2 disabled:cursor-not-allowed disabled:bg-slate-100"><option value="">{vetFarmerId ? "Select cow identification" : "Select a farmer first"}</option>{veterinaryCows.map((animal) => <option key={animal.animalId} value={animal.animalId}>{animal.tagNumber}{animal.breed ? ` - ${animal.breed}` : ""}</option>)}</select>
                 <input required type="date" value={vetForm.visitDate} onChange={(e) => setVetForm({ ...vetForm, visitDate: e.target.value })} className="rounded-xl border px-3 py-2" />
                 <input required type="date" value={vetForm.withdrawalUntil} onChange={(e) => setVetForm({ ...vetForm, withdrawalUntil: e.target.value })} className="rounded-xl border px-3 py-2" aria-label="Recovery or milk clearance date" />
@@ -794,12 +853,17 @@ export default function OperationsPage({ managementOnly = false }: { managementO
               <button disabled={!canWrite} className="mt-4 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">Save veterinary record</button>
             </form>
 
-            <form className={`${!(currentUser.role === "MCC_OFFICER" ? (showSection("batches") || showSection("records")) : showSection("records")) || managementOnly || !canTestQuality ? "hidden " : ""}rounded-2xl border border-slate-200 bg-white p-5 shadow-sm`} onSubmit={(event) => { event.preventDefault(); requestSubmitConfirmation(currentUser.role === "MCC_OFFICER" ? "createBatchQualityTest" : "createQualityTest", { testId: `QT-${Date.now()}`, ...qualityForm, collectionId: currentUser.role === "MCC_OFFICER" ? undefined : qualityForm.collectionId, batchId: currentUser.role === "MCC_OFFICER" ? qualityForm.batchId : undefined, acidity: Number(qualityForm.acidity) || undefined, density: Number(qualityForm.density) || undefined, testedBy: currentUser.uid, testedAt: new Date().toISOString() }, "Quality result saved.", "quality result"); }}>
-              <h2 className="text-lg font-semibold">{currentUser.role === "MCC_OFFICER" ? "Batch quality acceptance" : "Milk quality acceptance"}</h2>
+            <form className={`${!(currentUser.role === "MCC_OFFICER" ? (showSection("batches") || showSection("records")) : showSection("records")) || managementOnly || !canTestQuality ? "hidden " : ""}rounded-2xl border border-slate-200 bg-white p-5 shadow-sm`} onSubmit={(event) => { event.preventDefault(); const batchTest = currentUser.role === "MCC_OFFICER" && mccQualityTarget === "BATCH"; requestSubmitConfirmation(batchTest ? "createBatchQualityTest" : "createQualityTest", { testId: `QT-${Date.now()}`, ...qualityForm, collectionId: batchTest ? undefined : qualityForm.collectionId, batchId: batchTest ? qualityForm.batchId : undefined, acidity: Number(qualityForm.acidity) || undefined, density: Number(qualityForm.density) || undefined, lactometerReading: Number(qualityForm.lactometerReading), testedBy: currentUser.uid, testedAt: new Date().toISOString() }, "Quality result saved.", "quality result"); }}>
+              <h2 className="text-lg font-semibold">{currentUser.role === "MCC_OFFICER" && mccQualityTarget === "BATCH" ? "Batch quality acceptance" : "Level 1 milk quality testing"}</h2>
               <div className="mt-4 grid gap-3 md:grid-cols-2">
-                {currentUser.role === "MCC_OFFICER" ? <select required value={qualityForm.batchId} onChange={(e) => setQualityForm({ ...qualityForm, batchId: e.target.value })} className="rounded-xl border px-3 py-2 md:col-span-2"><option value="">Select pending batch</option>{currentState.batches.filter((batch) => batch.status === "OPEN").map((batch) => <option key={batch.batchId} value={batch.batchId}>{batch.batchId} - {batch.totalLitres.toFixed(2)} L</option>)}</select> : <select required value={qualityForm.collectionId} onChange={(e) => setQualityForm({ ...qualityForm, collectionId: e.target.value })} className="rounded-xl border px-3 py-2 md:col-span-2"><option value="">Select pending collection</option>{currentState.collections.filter((collection) => collection.acceptanceStatus === "PENDING").map((collection) => <option key={collection.collectionId} value={collection.collectionId}>{collection.collectionId} - {collection.litres} L</option>)}</select>}
+                {currentUser.role === "MCC_OFFICER" ? <select value={mccQualityTarget} onChange={(e) => setMccQualityTarget(e.target.value as "DIRECT_COLLECTION" | "BATCH")} className="rounded-xl border px-3 py-2 md:col-span-2"><option value="DIRECT_COLLECTION">Direct MCC collection - Level 1 test</option><option value="BATCH">Milk Collector batch - Level 2 acceptance</option></select> : null}
+                {currentUser.role === "MCC_OFFICER" && mccQualityTarget === "BATCH" ? <select required value={qualityForm.batchId} onChange={(e) => setQualityForm({ ...qualityForm, batchId: e.target.value })} className="rounded-xl border px-3 py-2 md:col-span-2"><option value="">Select pending batch</option>{currentState.batches.filter((batch) => batch.status === "OPEN").map((batch) => <option key={batch.batchId} value={batch.batchId}>{batch.batchId} - {batch.totalLitres.toFixed(2)} L</option>)}</select> : null}
+                {(currentUser.role !== "MCC_OFFICER" || mccQualityTarget === "DIRECT_COLLECTION") ? <select required value={qualityForm.collectionId} onChange={(e) => setQualityForm({ ...qualityForm, collectionId: e.target.value })} className="rounded-xl border px-3 py-2 md:col-span-2"><option value="">{currentUser.role === "MCC_OFFICER" ? "Select direct MCC collection" : "Select pending collection"}</option>{currentState.collections.filter((collection) => collection.acceptanceStatus === "PENDING" && (currentUser.role !== "MCC_OFFICER" || collection.collectionSource === "DIRECT_MCC_COLLECTION")).map((collection) => <option key={collection.collectionId} value={collection.collectionId}>{collection.collectionId} - {collection.litres} L</option>)}</select> : null}
                 <input type="number" step="0.01" placeholder="Acidity" value={qualityForm.acidity} onChange={(e) => setQualityForm({ ...qualityForm, acidity: e.target.value })} className="rounded-xl border px-3 py-2" />
                 <input type="number" step="0.001" placeholder="Density" value={qualityForm.density} onChange={(e) => setQualityForm({ ...qualityForm, density: e.target.value })} className="rounded-xl border px-3 py-2" />
+                <select required aria-label="Organoleptic result" value={qualityForm.organolepticResult} onChange={(e) => setQualityForm({ ...qualityForm, organolepticResult: e.target.value as "PASS" | "FAIL", result: e.target.value === "FAIL" ? "FAIL" : qualityForm.result })} className="rounded-xl border px-3 py-2"><option value="PASS">Organoleptic: Pass</option><option value="FAIL">Organoleptic: Fail</option></select>
+                <input required type="number" step="0.001" placeholder="Lactometer reading" value={qualityForm.lactometerReading} onChange={(e) => setQualityForm({ ...qualityForm, lactometerReading: e.target.value })} className="rounded-xl border px-3 py-2" />
+                <select required aria-label="Alcohol test result" value={qualityForm.alcoholTestResult} onChange={(e) => setQualityForm({ ...qualityForm, alcoholTestResult: e.target.value as "PASS" | "FAIL", result: e.target.value === "FAIL" ? "FAIL" : qualityForm.result })} className="rounded-xl border px-3 py-2"><option value="PASS">Alcohol test: Pass</option><option value="FAIL">Alcohol test: Fail</option></select>
                 <select aria-label="Decision" value={qualityForm.result} onChange={(e) => setQualityForm({ ...qualityForm, result: e.target.value as QualityTest["result"] })} className="rounded-xl border px-3 py-2"><option value="PASS">Accepted</option><option value="FAIL">Rejected</option><option value="PENDING">Pending</option></select>
                 <label className="flex items-center gap-2 rounded-xl border px-3 py-2 text-sm"><input type="checkbox" checked={qualityForm.adulterationDetected} onChange={(e) => setQualityForm({ ...qualityForm, adulterationDetected: e.target.checked })} /> Adulteration detected</label>
                 <textarea placeholder="Comment to farmer" value={qualityForm.comment} onChange={(e) => setQualityForm({ ...qualityForm, comment: e.target.value })} className="min-h-20 rounded-xl border px-3 py-2 md:col-span-2" />
@@ -934,8 +998,12 @@ export default function OperationsPage({ managementOnly = false }: { managementO
                             <span>Owner: <strong>{farmer.fullName}</strong></span><span>National ID: <strong>{farmer.nationalId ?? "Not provided"}</strong></span><span>MCC Name: <strong>{farmer.mccName ?? farmer.mccId}</strong></span>
                           </div>
                           <div className="mt-3 flex flex-wrap gap-2 print:hidden">
-                            <button type="button" onClick={() => setEditingFarmer(farmer)} className="rounded-lg border px-3 py-1.5 text-xs font-medium">Edit farmer</button>
-                            <button type="button" onClick={() => requestManageConfirmation("deleteFarmer", { farmerId: farmer.farmerId }, "Confirm deletion", "Delete this farmer and all assigned cows? This action cannot be undone.", true)} className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-medium text-white">Delete farmer</button>
+                            {currentUser.role !== "MILK_COLLECTOR" ? (
+                              <>
+                                <button type="button" onClick={() => setEditingFarmer(farmer)} className="rounded-lg border px-3 py-1.5 text-xs font-medium">Edit farmer</button>
+                                <button type="button" onClick={() => requestManageConfirmation("deleteFarmer", { farmerId: farmer.farmerId }, "Confirm deletion", "Delete this farmer and all assigned cows? This action cannot be undone.", true)} className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-medium text-white">Delete farmer</button>
+                              </>
+                            ) : null}
                           </div>
                           <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 bg-white">
                             <table className="min-w-full text-left text-sm">
@@ -992,6 +1060,9 @@ export default function OperationsPage({ managementOnly = false }: { managementO
                   <select aria-label="Filter by MCC status" value={recordsStatus} onChange={(event) => setRecordsStatus(event.target.value as typeof recordsStatus)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
                     <option value="ALL">All MCC statuses</option><option value="ACCEPTED">Accepted by MCC</option><option value="REJECTED">Rejected by MCC</option><option value="PENDING">Pending MCC</option>
                   </select>
+                  <select aria-label="Filter by collection source" value={recordsSource} onChange={(event) => setRecordsSource(event.target.value as typeof recordsSource)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                    <option value="ALL">All collection sources</option><option value="FARMER_COLLECTION_CHAIN">Milk Collector chain</option><option value="DIRECT_MCC_COLLECTION">Direct MCC collection</option>
+                  </select>
                   <select aria-label="Sort collection time" value={recordsSort} onChange={(event) => setRecordsSort(event.target.value as "newest" | "oldest")} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
                     <option value="newest">Newest supply first</option><option value="oldest">Oldest supply first</option>
                   </select>
@@ -999,10 +1070,10 @@ export default function OperationsPage({ managementOnly = false }: { managementO
                 </div>
                 <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
                   <table className="min-w-full text-left text-sm">
-                    <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-3 py-3">Farmer</th><th className="px-3 py-3">Supplied at</th><th className="px-3 py-3">Litres</th><th className="px-3 py-3">Collector status</th><th className="px-3 py-3">MCC status</th></tr></thead>
+                    <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-3 py-3">Farmer</th><th className="px-3 py-3">Source</th><th className="px-3 py-3">Supplied at</th><th className="px-3 py-3">Litres</th><th className="px-3 py-3">Collector status</th><th className="px-3 py-3">MCC status</th></tr></thead>
                     <tbody>
-                      {collectedMilkRecords.map(({ collection, farmer }) => <tr key={collection.collectionId} className="border-t border-slate-100 hover:bg-emerald-50/50"><td className="px-3 py-3 font-medium">{farmer?.fullName}</td><td className="px-3 py-3">{new Date(collection.collectionDate).toLocaleString()}</td><td className="px-3 py-3">{collection.litres.toFixed(2)} L</td><td className="px-3 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-medium ${collection.collectorAcceptanceStatus === "REJECTED" ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-700"}`}>{collection.collectorAcceptanceStatus}</span></td><td className="px-3 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-medium ${collection.mccAcceptanceStatus === "REJECTED" ? "bg-rose-50 text-rose-700" : collection.mccAcceptanceStatus === "PENDING" ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{collection.mccAcceptanceStatus}</span></td></tr>)}
-                      {!collectedMilkRecords.length ? <tr><td colSpan={5} className="px-3 py-6 text-center text-slate-500">No milk collections match the selected filters.</td></tr> : null}
+                      {collectedMilkRecords.map(({ collection, farmer }) => <tr key={collection.collectionId} className="border-t border-slate-100 hover:bg-emerald-50/50"><td className="px-3 py-3 font-medium">{farmer?.fullName}</td><td className="px-3 py-3 text-xs">{collection.collectionSource === "DIRECT_MCC_COLLECTION" ? "Direct MCC" : "Collector chain"}</td><td className="px-3 py-3">{new Date(collection.collectionDate).toLocaleString()}</td><td className="px-3 py-3">{collection.litres.toFixed(2)} L</td><td className="px-3 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-medium ${collection.collectorAcceptanceStatus === "REJECTED" ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-700"}`}>{collection.collectorAcceptanceStatus}</span></td><td className="px-3 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-medium ${collection.mccAcceptanceStatus === "REJECTED" ? "bg-rose-50 text-rose-700" : collection.mccAcceptanceStatus === "PENDING" ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{collection.mccAcceptanceStatus}</span></td></tr>)}
+                      {!collectedMilkRecords.length ? <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-500">No milk collections match the selected filters.</td></tr> : null}
                     </tbody>
                   </table>
                 </div>

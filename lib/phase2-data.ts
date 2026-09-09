@@ -74,6 +74,7 @@ export type MilkCollection = {
   animalId?: string;
   mccId: string;
   collectionDate: string;
+  collectionSource: "FARMER_COLLECTION_CHAIN" | "DIRECT_MCC_COLLECTION";
   litres: number;
   fatPercentage?: number;
   temperatureC?: number;
@@ -93,6 +94,9 @@ export type QualityTest = {
   acidity?: number;
   density?: number;
   adulterationDetected: boolean;
+  organolepticResult?: "PASS" | "FAIL";
+  lactometerReading?: number;
+  alcoholTestResult?: "PASS" | "FAIL";
   result: "PENDING" | "PASS" | "FAIL";
   comment?: string;
   testedBy: string;

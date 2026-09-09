@@ -8,9 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { readAppState, type AppUser } from "@/lib/app-data";
-
-const STORAGE_KEY = "milk-demo-user";
+import type { AppUser } from "@/lib/app-data";
 
 type AuthContextValue = {
   user: AppUser | null;
@@ -32,33 +30,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     async function hydrateUser() {
-      const storedUser = window.localStorage.getItem(STORAGE_KEY);
-
-      if (storedUser) {
-        const parsedUser = JSON.parse(storedUser) as { uid: string };
-        const state = await readAppState();
-        const matchedUser = state.users.find((candidate) => candidate.uid === parsedUser.uid) ?? null;
-        setUser(matchedUser);
-      }
-
       setIsReady(true);
     }
 
     void hydrateUser();
   }, []);
-
-  useEffect(() => {
-    if (!isReady || typeof window === "undefined") {
-      return;
-    }
-
-    if (user) {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ uid: user.uid, email: user.email }));
-      return;
-    }
-
-    window.localStorage.removeItem(STORAGE_KEY);
-  }, [isReady, user]);
 
   const login = async (email: string, password: string) => {
     try {
@@ -77,17 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(payload.user);
       return { ok: true, message: payload.message ?? "Login successful." };
     } catch {
-      const state = await readAppState();
-      const matchedUser = state.users.find(
-        (candidate) => candidate.email.toLowerCase() === email.toLowerCase() && candidate.password === password,
-      );
-
-      if (!matchedUser) {
-        return { ok: false, message: "Invalid email or password." };
-      }
-
-      setUser(matchedUser);
-      return { ok: true, message: "Login successful." };
+      return { ok: false, message: "The database could not be reached. Please try again." };
     }
   };
 

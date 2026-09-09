@@ -238,6 +238,7 @@ CREATE TABLE IF NOT EXISTS milk_collections (
   farmer_id VARCHAR(100) NOT NULL,
   mcc_id VARCHAR(50) NOT NULL,
   collection_date DATETIME NOT NULL,
+  collection_source VARCHAR(40) NOT NULL DEFAULT 'FARMER_COLLECTION_CHAIN',
   litres DECIMAL(10,2) NOT NULL,
   fat_percentage DECIMAL(5,2),
   temperature_c DECIMAL(5,2),
@@ -254,6 +255,7 @@ CREATE TABLE IF NOT EXISTS milk_collections (
   CONSTRAINT fk_collections_mcc FOREIGN KEY (mcc_id) REFERENCES mccs(mcc_id)
 );
 ALTER TABLE milk_collections ADD COLUMN IF NOT EXISTS animal_id VARCHAR(100) NULL AFTER farmer_id;
+ALTER TABLE milk_collections ADD COLUMN IF NOT EXISTS collection_source VARCHAR(40) NOT NULL DEFAULT 'FARMER_COLLECTION_CHAIN';
 ALTER TABLE milk_collections ADD INDEX IF NOT EXISTS idx_collections_animal (animal_id);
 
 ALTER TABLE milk_collections ADD COLUMN IF NOT EXISTS collector_acceptance_status VARCHAR(20) NOT NULL DEFAULT 'PENDING';
@@ -267,12 +269,20 @@ CREATE TABLE IF NOT EXISTS quality_tests (
   acidity DECIMAL(5,2),
   density DECIMAL(6,3),
   adulteration_detected BOOLEAN NOT NULL DEFAULT FALSE,
+  organoleptic_result VARCHAR(10),
+  lactometer_reading DECIMAL(6,3),
+  alcohol_test_result VARCHAR(10),
+  comment TEXT,
   result VARCHAR(20) NOT NULL DEFAULT 'PENDING',
   tested_by VARCHAR(100) NOT NULL,
   tested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_quality_collection (collection_id),
   CONSTRAINT fk_quality_collection FOREIGN KEY (collection_id) REFERENCES milk_collections(collection_id)
 );
+ALTER TABLE quality_tests ADD COLUMN IF NOT EXISTS organoleptic_result VARCHAR(10) NULL;
+ALTER TABLE quality_tests ADD COLUMN IF NOT EXISTS lactometer_reading DECIMAL(6,3) NULL;
+ALTER TABLE quality_tests ADD COLUMN IF NOT EXISTS alcohol_test_result VARCHAR(10) NULL;
+ALTER TABLE quality_tests ADD COLUMN IF NOT EXISTS comment TEXT NULL;
 
 CREATE TABLE IF NOT EXISTS veterinary_records (
   id INT AUTO_INCREMENT PRIMARY KEY,
