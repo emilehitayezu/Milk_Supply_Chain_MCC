@@ -169,6 +169,34 @@ export const defaultState: AppState = {
       mccIds: ["MCC-001"],
       status: "ACTIVE",
     },
+    {
+      uid: "collector-1",
+      fullName: "Milk Collector",
+      email: "collector@milk.local",
+      password: "collector123",
+      role: "MILK_COLLECTOR",
+      mccIds: ["MCC-001"],
+      collectorBatchCode: "BATCH-01-MC",
+      status: "ACTIVE",
+    },
+    {
+      uid: "farmer-1",
+      fullName: "Demo Farmer",
+      email: "farmer@milk.local",
+      password: "farmer123",
+      role: "FARMER",
+      mccIds: ["MCC-001"],
+      status: "ACTIVE",
+    },
+    {
+      uid: "vet-1",
+      fullName: "Veterinary Officer",
+      email: "vet@milk.local",
+      password: "vet123",
+      role: "VETERINARY_OFFICER",
+      mccIds: ["MCC-001"],
+      status: "ACTIVE",
+    },
   ],
   mccs: [
     {
@@ -227,7 +255,7 @@ export async function readAppState(): Promise<AppState> {
   const response = await fetch("/api/system", { cache: "no-store" });
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(payload?.error ?? "The application data could not be loaded from MySQL.");
+    throw new Error(payload?.error ?? "The application data could not be loaded from Firebase.");
   }
 
   const payload = (await response.json()) as AppState;
@@ -249,7 +277,7 @@ export async function writeAppState(state: AppState): Promise<void> {
   });
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(payload?.error ?? "The changes could not be saved to MySQL.");
+    throw new Error(payload?.error ?? "The changes could not be saved to Firebase.");
   }
 }
 

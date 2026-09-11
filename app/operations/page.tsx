@@ -167,7 +167,7 @@ export default function OperationsPage({ managementOnly = false }: { managementO
     fetch("/api/system", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "phase2", userId: user?.uid }) })
       .then((response) => response.json() as Promise<Phase2State>)
       .then((data) => { if (active) setState(data); })
-      .catch(() => { if (active) setMessage("Phase 2 data could not be loaded. Check that the MySQL migration has been run."); });
+      .catch(() => { if (active) setMessage("Phase 2 data could not be loaded. Check the Firebase Realtime Database configuration and rules."); });
     return () => { active = false; };
   }, [user?.uid]);
 

@@ -12,7 +12,7 @@ The application is structured around a clean Next.js App Router implementation w
 - React 19
 - TypeScript
 - Tailwind CSS
-- Firebase client configuration ready for deployment
+- Firebase Realtime Database client configuration ready for deployment
 - Zod-ready validation model
 - Lucide icons
 
@@ -26,7 +26,7 @@ The application is structured around a clean Next.js App Router implementation w
 ## Firebase setup
 
 1. Create a Firebase project in the Firebase console.
-2. Enable Authentication and Firestore.
+2. Enable Authentication and Realtime Database.
 3. Create a Storage bucket if files will be uploaded.
 4. Add a web app and copy the Firebase config values into your environment file.
 5. Configure Firebase Security Rules using the included `firestore.rules` and `storage.rules` templates.
@@ -51,11 +51,11 @@ NEXT_PUBLIC_FIREBASE_APP_ID=
 
 The demo app also works without live Firebase credentials by using local in-browser storage for the Phase 1 workflow.
 
-## Firestore setup
+## Realtime Database setup
 
-1. Create a Firestore database.
-2. Apply the rules in `firestore.rules`.
-3. Add composite indexes defined in `firestore.indexes.json`.
+1. Create a Realtime Database.
+2. Configure Realtime Database security rules for the paths listed below.
+3. Confirm the database URL is `https://milksupplychain-d0276-default-rtdb.firebaseio.com`.
 
 ## Security rules setup
 
@@ -93,21 +93,16 @@ npm run dev
 
 Open http://localhost:3000.
 
-## Local MySQL setup
+## Realtime Database data layout
 
-Start Apache and MySQL in XAMPP, then apply the complete schema from the project root:
+Each former MySQL table is a top-level Realtime Database collection:
 
-```powershell
-C:\xampp\mysql\bin\mysql.exe -u root < db\init.sql
-```
+- `/users/{uid}`, `/mccs/{mccId}`, `/audit_logs/{auditId}`, `/settings/values`
+- `/farmers/{farmerId}`, `/animals/{animalId}`, `/milk_collections/{collectionId}`
+- `/quality_tests/{testId}`, `/veterinary_records/{recordId}`, `/milk_batches/{batchId}`
+- `/farmer_payments/{paymentId}` plus the remaining workflow collections
 
-The migration creates or updates the `new_milk` database and includes the Phase 1 and Phase 2 tables:
-
-- `users`, `mccs`, `audit_logs`, `settings`
-- `farmers`, `animals`, `milk_collections`, `quality_tests`
-- `veterinary_records`, `milk_batches`, `farmer_payments`
-
-After logging in, open **Operations** to use the Phase 2 workflows.
+Record properties remain JSON values on each record. The data layer reads with `get(ref(db, path))`, creates with `set` or `push`, and applies partial updates with `update`.
 
 ## Default development users
 
@@ -154,7 +149,7 @@ npm run dev -- --hostname 0.0.0.0 --port 3000
 
 1. Push the project to GitHub.
 2. Connect the repository to Vercel.
-3. Add the Firebase environment variables under Vercel Project Settings.
+3. Add the Firebase environment variables under Vercel Project Settings, including `NEXT_PUBLIC_FIREBASE_DATABASE_URL`.
 4. Deploy the project.
 5. Verify the login page loads and role-based access works.
 
@@ -169,4 +164,4 @@ The architecture is ready for phase-based expansion:
 - payroll and payments
 - reporting and notification workflows
 
-The local mock state is in `lib/app-data.ts` and can be replaced by Firebase Firestore services as soon as real backend data is connected.
+The Firebase Realtime Database data layer is implemented in `lib/data-layer.ts`.
