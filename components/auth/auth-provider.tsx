@@ -19,6 +19,7 @@ type AuthContextValue = {
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+const AUTH_STORAGE_KEY = "milk-auth-user";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AppUser | null>(null);
@@ -30,6 +31,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     async function hydrateUser() {
+      const storedUser = window.localStorage.getItem(AUTH_STORAGE_KEY);
+      if (storedUser) {
+        try {
+          setUser(JSON.parse(storedUser) as AppUser);
+        } catch {
+          window.localStorage.removeItem(AUTH_STORAGE_KEY);
+        }
+      }
       setIsReady(true);
     }
 
@@ -51,13 +60,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       setUser(payload.user);
+      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(payload.user));
       return { ok: true, message: payload.message ?? "Login successful." };
     } catch {
       return { ok: false, message: "The database could not be reached. Please try again." };
     }
   };
 
-  const logout = () => setUser(null);
+  const logout = () => {
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    setUser(null);
+  };
 
   const changePassword = async (currentPassword: string, newPassword: string) => {
     const response = await fetch("/api/system", {
@@ -67,7 +80,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     const payload = (await response.json()) as { ok?: boolean; error?: string };
     if (!response.ok || !payload.ok) return { ok: false, message: payload.error ?? "Password could not be changed." };
-    if (user) setUser({ ...user, password: newPassword, mustChangePassword: false });
+    if (user) {
+      const updatedUser = { ...user, password: newPassword, mustChangePassword: false };
+      setUser(updatedUser);
+      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(updatedUser));
+    }
     return { ok: true, message: "Password changed successfully." };
   };
 

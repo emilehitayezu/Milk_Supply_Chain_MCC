@@ -117,16 +117,16 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [user?.uid]);
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900">
+    <div className="min-h-screen bg-[#f4f8f5] text-slate-900">
       <div className="flex min-h-screen flex-col lg:flex-row">
-        <aside className="w-full bg-slate-900 px-4 py-6 text-slate-100 lg:w-72 lg:min-h-screen">
+        <aside className="w-full bg-gradient-to-b from-[#12382d] via-[#164b37] to-[#0d2b23] px-4 py-6 text-slate-100 shadow-2xl shadow-emerald-950/10 lg:w-72 lg:min-h-screen">
           <div className="mb-6 flex items-center gap-3 px-2">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-300">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-300 to-emerald-500 text-emerald-950 shadow-lg shadow-emerald-950/20">
               <Briefcase className="h-5 w-5" />
             </div>
             <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Milk</p>
-              <h1 className="text-lg font-semibold">Digital Supply Chain</h1>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300">Milk</p>
+              <h1 className="text-lg font-bold tracking-tight text-white">Digital Supply Chain</h1>
             </div>
           </div>
 
@@ -137,8 +137,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <Link
                   key={href}
                   href={href}
-                  className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${
-                    isActive ? "bg-emerald-500 text-slate-950" : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                  className={`flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-medium transition ${
+                  isActive ? "bg-white text-[#12382d] shadow-lg shadow-emerald-950/10" : "text-emerald-50/75 hover:bg-white/10 hover:text-white"
                   }`}
                 >
                   <Icon className="h-4 w-4" />
@@ -167,7 +167,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           ) : null}
 
-          <div className="mt-8 rounded-2xl border border-slate-700 bg-slate-800/80 p-4">
+          <div className="mt-8 rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur-sm">
             <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-slate-400">
               <Shield className="h-3.5 w-3.5" />
               Access
@@ -178,11 +178,11 @@ export function AppShell({ children }: { children: ReactNode }) {
         </aside>
 
         <main className="flex-1">
-          <header className="border-b border-slate-200 bg-white/90 px-5 py-4 backdrop-blur-sm">
+          <header className="sticky top-0 z-30 border-b border-emerald-100/80 bg-[#f8fcf9]/90 px-5 py-4 shadow-sm backdrop-blur-xl">
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Operations overview</p>
-                <h2 className="text-xl font-semibold text-slate-900">Milk Collection Management</h2>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">Operations overview</p>
+                <h2 className="text-xl font-bold tracking-tight text-[#12382d]">Milk Collection Management</h2>
               </div>
 
               <div className="flex items-center gap-3">
@@ -235,7 +235,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           </header>
 
-          <div className="p-5 md:p-8">{children}</div>
+          <div className="p-5 md:p-8 lg:p-10">{children}</div>
         </main>
       </div>
     </div>

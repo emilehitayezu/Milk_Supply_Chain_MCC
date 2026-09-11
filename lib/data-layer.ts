@@ -388,14 +388,29 @@ export async function listCowRegistrationAuthorizations(user: AppUser): Promise<
     ? (await readTable<AnyRecord>("farmers")).find((item) => item.userId === user.uid)
     : null;
   return rows
-    .filter((row) => user.role !== "FARMER" || row.farmerId === farmer?.farmerId)
+    .filter((row) => user.role !== "FARMER" || (row.farmerId === farmer?.farmerId && row.status === "PENDING_AUTHORIZATION"))
     .map((row) => ({
       ...row,
       farmerName: row.farmerName ?? row.farmerId,
       requestedByName: row.requestedByName ?? row.requestedBy,
       cowCount: row.cows?.length ?? row.cowCount ?? 0,
       cowTags: row.cows?.map((cow: AnyRecord) => cow.tagNumber) ?? row.cowTags ?? [],
+      otpCode: row.status === "PENDING_AUTHORIZATION" ? String(row.otpCode ?? "") : "",
     } as CowRegistrationAuthorization));
 }
 export async function listCowRegistrationSessions(): Promise<CowRegistrationSession[]> { return (await readTable<AnyRecord>("cow_registration_authorizations")) as CowRegistrationSession[]; }
 export async function verifyCowRegistrationBatch(input: { batchId: string; otp: string; requestedBy: string }): Promise<{ registeredCount: number; batchId: string }> { const auth = await readRecord<AnyRecord>("cow_registration_authorizations", input.batchId); if (!auth || auth.status !== "PENDING_AUTHORIZATION" || auth.expiresAt < now() || auth.otpHash !== hashOtp(input.otp)) throw new Error("Invalid or expired authorization code."); const cows = auth.cows ?? []; await Promise.all(cows.map((cow: AnyRecord) => writeRecord("animals", cow.animalId, { ...cow, registrationBatchId: input.batchId, createdAt: now() }))); await patchRecord("cow_registration_authorizations", input.batchId, { status: "REGISTERED", usedAt: now(), verifiedBy: input.requestedBy }); await patchRecord("cow_registration_batches", input.batchId, { status: "REGISTERED" }); return { registeredCount: cows.length, batchId: input.batchId }; }
+export async function rejectCowRegistrationBatch(batchId: string, farmerUserId: string): Promise<void> {
+  const auth = await readRecord<AnyRecord>("cow_registration_authorizations", batchId);
+  const farmer = (await readTable<AnyRecord>("farmers")).find((item) => item.userId === farmerUserId);
+  if (!auth || !farmer || auth.farmerId !== farmer.farmerId) {
+    throw new Error("This authorization does not belong to your farmer account.");
+  }
+  if (auth.status !== "PENDING_AUTHORIZATION" || auth.expiresAt < now()) {
+    throw new Error("Only a pending, unexpired authorization can be rejected.");
+  }
+  await Promise.all([
+    patchRecord("cow_registration_authorizations", batchId, { status: "REJECTED", rejectedAt: now(), rejectedBy: farmerUserId }),
+    patchRecord("cow_registration_batches", batchId, { status: "REJECTED", rejectedAt: now(), rejectedBy: farmerUserId }),
+  ]);
+}

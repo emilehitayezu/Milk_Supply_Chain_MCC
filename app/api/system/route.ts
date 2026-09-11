@@ -5,6 +5,7 @@ import {
   createBreedType,
   listBreedTypes,
   verifyCowRegistrationBatch,
+  rejectCowRegistrationBatch,
   createCollection,
   createFarmer,
   listActiveCollectors,
@@ -334,6 +335,23 @@ export async function POST(request: Request) {
         description: `${result.registeredCount} cows were registered after successful farmer OTP authorization.`,
       }, actor.uid);
       return NextResponse.json({ ok: true, ...result });
+    }
+
+    if (body.action === "rejectCowRegistrationBatch") {
+      const actor = await getUserByUid(body.userId ?? "");
+      if (!actor || actor.role !== "FARMER") {
+        return NextResponse.json({ error: "Only the farmer can reject this authorization." }, { status: 403 });
+      }
+      await rejectCowRegistrationBatch(String(body.data?.batchId ?? ""), actor.uid);
+      await appendAuditEntryToDatabase({
+        userId: actor.uid,
+        action: "COW_REGISTRATION_BATCH_REJECTED",
+        module: "animals",
+        entityType: "cowRegistrationBatch",
+        entityId: String(body.data?.batchId ?? ""),
+        description: "The farmer rejected a cow registration authorization request.",
+      }, actor.uid);
+      return NextResponse.json({ ok: true });
     }
 
     if (body.action === "createCollection") {
