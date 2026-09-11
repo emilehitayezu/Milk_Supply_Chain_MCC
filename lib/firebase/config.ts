@@ -14,8 +14,9 @@ const firebaseConfig = {
 };
 
 export const firebaseEnabled = Boolean(firebaseConfig.databaseURL && firebaseConfig.projectId);
+export const firebaseAuthConfigured = Boolean(firebaseConfig.apiKey && firebaseConfig.appId);
 
 export const app = firebaseEnabled ? (getApps().length ? getApp() : initializeApp(firebaseConfig)) : null;
-export const auth = app ? getAuth(app) : null;
+export const auth = app && firebaseAuthConfigured ? getAuth(app) : null;
 export const db = app ? getDatabase(app) : null;
 export const storage = app ? getStorage(app) : null;
