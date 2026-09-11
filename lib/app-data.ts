@@ -22,6 +22,7 @@ export type AppUser = {
   mccIds: string[];
   collectorBatchCode?: string;
   status: "ACTIVE" | "INACTIVE" | "SUSPENDED";
+  photoUrl?: string;
 };
 
 export type MccCenter = {

@@ -16,6 +16,7 @@ type AuthContextValue = {
   login: (email: string, password: string) => Promise<{ ok: boolean; message: string }>;
   logout: () => void;
   changePassword: (currentPassword: string, newPassword: string) => Promise<{ ok: boolean; message: string }>;
+  updateProfile: (data: { fullName: string; email: string; photoUrl?: string }) => Promise<{ ok: boolean; message: string }>;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -88,6 +89,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { ok: true, message: "Password changed successfully." };
   };
 
+  const updateProfile = async (data: { fullName: string; email: string; photoUrl?: string }) => {
+    if (!user) return { ok: false, message: "You must be signed in." };
+    try {
+      const response = await fetch("/api/system", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "updateProfile", userId: user.uid, data }),
+      });
+      const payload = (await response.json()) as { ok?: boolean; error?: string; user?: AppUser };
+      if (!response.ok || !payload.ok || !payload.user) return { ok: false, message: payload.error ?? "Profile could not be updated." };
+      setUser(payload.user);
+      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(payload.user));
+      return { ok: true, message: "Profile updated successfully." };
+    } catch {
+      return { ok: false, message: "The profile could not be updated." };
+    }
+  };
+
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
@@ -95,6 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       logout,
       changePassword,
+      updateProfile,
     }),
     [isReady, user],
   );

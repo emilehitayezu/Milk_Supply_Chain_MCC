@@ -212,11 +212,11 @@ export function AppShell({ children }: { children: ReactNode }) {
                     </div>
                   ) : null}
                 </div> : null}
-                <div className="flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-                  <ArrowUpRight className="h-4 w-4" />
-                  {user.fullName}
+                <div className="flex items-center gap-2 rounded-full bg-emerald-50 px-2.5 py-1.5 text-sm text-emerald-700">
+                  {user.photoUrl ? <img src={user.photoUrl} alt="" className="h-7 w-7 rounded-full object-cover ring-2 ring-white" /> : <span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-600 text-xs font-bold text-white">{user.fullName.slice(0, 1).toUpperCase()}</span>}
+                  <span className="hidden sm:inline">{user.fullName}</span>
                 </div>
-                <Link href="/dashboard" className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-700 transition hover:bg-sky-100">
+                <Link href="/profile" className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 transition hover:bg-emerald-100">
                   <UserRound className="h-4 w-4" />
                   Profile
                 </Link>

@@ -176,6 +176,15 @@ export async function updateUserByAdmin(input: Pick<AppUser, "uid" | "fullName" 
   await patchRecord("users", input.uid, { fullName: input.fullName, email: input.email, username: input.email, role: input.role, status: input.status, ...(input.password ? { password: input.password, mustChangePassword: true } : {}) });
 }
 
+export async function updateUserProfile(input: Pick<AppUser, "uid" | "fullName" | "email"> & { photoUrl?: string }): Promise<AppUser> {
+  const user = await getUserByUid(input.uid);
+  if (!user) throw new Error("User was not found.");
+  const updated = { fullName: input.fullName.trim(), email: input.email.trim(), username: input.email.trim(), ...(input.photoUrl !== undefined ? { photoUrl: input.photoUrl } : {}) };
+  if (!updated.fullName || !updated.email) throw new Error("Name and email are required.");
+  await patchRecord("users", input.uid, updated);
+  return asUser({ ...user, ...updated });
+}
+
 export async function createUser(input: Pick<AppUser, "uid" | "fullName" | "email" | "password" | "role" | "mccIds" | "status"> & { collectorBatchCode?: string }): Promise<void> {
   if (await readRecord("users", input.uid)) throw new Error("This user already exists.");
   await writeRecord("users", input.uid, { ...input, username: input.email, mustChangePassword: true });

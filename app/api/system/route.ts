@@ -34,6 +34,7 @@ import {
   getScopedPhase2Data,
   getUserByUid,
   updateUserByAdmin,
+  updateUserProfile,
   createUser,
   createCollectorUser,
   deleteUserByAdmin,
@@ -90,6 +91,18 @@ export async function POST(request: Request) {
     if (body.action === "changePassword") {
       await changeUserPassword(String(body.userId ?? ""), String(body.data?.currentPassword ?? ""), String(body.data?.newPassword ?? ""));
       return NextResponse.json({ ok: true });
+    }
+
+    if (body.action === "updateProfile") {
+      const user = await getUserByUid(String(body.userId ?? ""));
+      if (!user) return NextResponse.json({ error: "Authenticated user required." }, { status: 401 });
+      const profile = await updateUserProfile({
+        uid: user.uid,
+        fullName: String(body.data?.fullName ?? ""),
+        email: String(body.data?.email ?? ""),
+        ...(body.data?.photoUrl !== undefined ? { photoUrl: String(body.data.photoUrl) } : {}),
+      });
+      return NextResponse.json({ ok: true, user: profile });
     }
 
     if (body.action === "saveState") {
